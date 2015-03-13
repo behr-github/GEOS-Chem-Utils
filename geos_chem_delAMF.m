@@ -16,6 +16,11 @@ elseif ~isscalar(time_ind) || ~isnumeric(time_ind)
     error(E.badinput('The fourth input must be a scalar number'));
 end
 
+global onCluster;
+if isempty(onCluster);
+    onCluster = 0;
+end
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%% USER VARIABLES %%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -32,7 +37,12 @@ RAA = 100;
 waitbar_bool = isDisplay();
 
 % Where the OMLER albedo file can be found
-albfile = '/global/home/users/laughner/myscratch/SAT/OMI/OMLER/OMI-Aura_L3-OMLER_2005m01-2009m12_v003-2010m0503t063707.he5'; 
+if onCluster
+    albfile = '/global/home/users/laughner/myscratch/SAT/OMI/OMLER/OMI-Aura_L3-OMLER_2005m01-2009m12_v003-2010m0503t063707.he5'; 
+else
+    albfile = '/Volumes/share/GROUP/SAT/OMI/OMLER/OMI-Aura_L3-OMLER_2005m01-2009m12_v003-2010m0503t063707.he5';
+end
+
 [fileDamf,fileTmp] = amf_filepaths;
 
 omi_presLevels = OMNO2PresLev;
@@ -222,7 +232,7 @@ parfor a=1:gc_sz(1)
         this_new_prof = this_new_prof(new_xx);
         this_new_pres = this_new_pres(new_xx);
         
-        old_xx = this_old_pres > this_old_trop;
+        old_xx = 1:length(this_old_prof) < this_old_trop;
         this_old_prof = this_old_prof(old_xx);
         this_old_pres = this_old_pres(old_xx);
         
@@ -273,9 +283,9 @@ parfor a=1:gc_sz(1)
         dAmfClr_old = rDamf2(fileDamf, this_old_pres, SZA, VZA, RAA, ALB, old_SurfP);
         
         % We're using cloud data directly from GEOS-Chem which 1) its grid
-        % cells are much bigger than an OMI pixel, and 2) it's purely a
-        % geometric cloud fraction, not a radiance fraction.  Since the
-        % radiance fraction is 
+        % cells are much bigger than an OMI pixel, so we won't filter by
+        % cloud fraction. This is solely to get an impression of how cloud
+        % variables affect the AMF difference.
         cloudalbedo=0.8;
         dAmfCld_new = rDamf2(fileDamf, this_new_pres, SZA, VZA, RAA, cloudalbedo, this_new_cldtop_pres);
         dAmfCld_old = rDamf2(fileDamf, this_old_pres, SZA, VZA, RAA, cloudalbedo, this_old_cldtop_pres);
@@ -289,7 +299,7 @@ parfor a=1:gc_sz(1)
         elseif this_lat > 89; this_lat = 89;
         end
         new_temperature = rNmcTmp2(fileTmp, this_new_pres', this_lon, this_lat, this_month);
-        old_temperature = rNmcTmp2(fileTmp, this_old_pres', this_lon, this_lat(:), this_month);
+        old_temperature = rNmcTmp2(fileTmp, this_old_pres', this_lon, this_lat, this_month);
         
         noGhost = 1; ak = 0;
         new_amf = omiAmfAK2(new_SurfP, this_new_cldtop_pres, this_new_cldfrc, this_new_cld_radfrac, this_new_pres, dAmfClr_new, dAmfCld_new, new_temperature', this_new_prof, this_new_prof, noGhost, ak);
