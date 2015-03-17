@@ -15,7 +15,7 @@ E = JLLErrors;
 
 % Add the folder with the BPCH functions. In should be in the folder with
 % this function.
-addpath('~/Documents/MATLAB/GEOS-Chem Utils/BPCH_Functions');
+addpath('~/Documents/MATLAB/GEOS_Chem_Utils/BPCH_Functions');
 
 % Get the output file from the user, and use the directory to find the
 % tracerinfo and diaginfo files.
@@ -38,11 +38,20 @@ Data = struct('dataBlock', [], 'dataUnit', [], 'fullName', [], 'fullCat', [], 't
 input_title = 'Enter the %s, or cancel to exit and return.';
 D=0;
 % Ask the user for the category and tracer names.  Loop until the user
-% cancels; this allows the user to enter multiple variables.
+% cancels or enters an empty string for category or tracer; this allows the
+% user to enter multiple variables.  Note that inputdlg returns an empty
+% cell array, i.e. {}, if the user cancels and a cell array with an empty
+% string, i.e. {''}, if the user hits OK without entering anything.  We'll
+% use this to check if the user wants to append the data useful for dealing
+% with satellites, such as pressure, boxheight, etc.
 first_time = true;
 while true
     user_input = inputdlg(sprintf(input_title,'category'));
     if isempty(user_input);
+        append_sat = false;
+        break
+    elseif isempty(user_input{1})
+        append_sat = true;
         break
     end
     
@@ -50,6 +59,10 @@ while true
     
     user_input = inputdlg(sprintf(input_title,'tracer'));
     if isempty(user_input)
+        append_sat = false;
+        break
+    elseif isempty(user_input{1})
+        append_sat = true;
         break
     end
     
@@ -58,7 +71,7 @@ while true
     % Change the message for successive variables.
     if first_time
         first_time = false;
-        input_title = 'Enter another %s, or cancel to exit and return. The variables NAIR, PSURF,and BXHEIGHT will automatically be appended.';
+        input_title = 'Enter another %s, enter a blank field to append the variables NAIR, PSURF,and BXHEIGHT, or cancel to return immediately.';
     end
     
     % Call the function to read the BPCH file
@@ -97,25 +110,27 @@ while true
     end
 end
 
-% Get the NAIR, PSURF, and BXHEIGHT variables
-categories = {'BXHGHT','PEDGE','BXHGHT','TR_PAUSE'};
-tracers = {'NAIR','PSURF','BXHEIGHT','TP_LEVEL'};
-for a=1:numel(categories);
-    fprintf('Now retrieving %s/%s\n',categories{a},tracers{a});
-    D = D+1;
-    [ dataBlock, dataUnit, fullName, fullCat, tVec, modelName, modelRes, dataScale, molMass, tEdge ] = readBPCHSingle(inputFile,categories{a},tracers{a},tracerFile,diagFile);
-    Data(D).dataBlock = dataBlock;
-    Data(D).dataUnit = dataUnit;
-    Data(D).fullName = fullName;
-    Data(D).fullCat = fullCat;
-    Data(D).tVec = tVec;
-    Data(D).modelName = modelName;
-    Data(D).modelRes = modelRes;
-    Data(D).dataScale = dataScale;
-    Data(D).molMass = molMass;
-    Data(D).tEdge = tEdge;
+% Get the NAIR, PSURF, and BXHEIGHT variables, if the user hit "OK" on a
+% blank input
+if append_sat
+    categories = {'BXHGHT','PEDGE','BXHGHT','TR_PAUSE'};
+    tracers = {'NAIR','PSURF','BXHEIGHT','TP_LEVEL'};
+    for a=1:numel(categories);
+        fprintf('Now retrieving %s/%s\n',categories{a},tracers{a});
+        D = D+1;
+        [ dataBlock, dataUnit, fullName, fullCat, tVec, modelName, modelRes, dataScale, molMass, tEdge ] = readBPCHSingle(inputFile,categories{a},tracers{a},tracerFile,diagFile);
+        Data(D).dataBlock = dataBlock;
+        Data(D).dataUnit = dataUnit;
+        Data(D).fullName = fullName;
+        Data(D).fullCat = fullCat;
+        Data(D).tVec = tVec;
+        Data(D).modelName = modelName;
+        Data(D).modelRes = modelRes;
+        Data(D).dataScale = dataScale;
+        Data(D).molMass = molMass;
+        Data(D).tEdge = tEdge;
+    end
 end
-
 
 
 end
