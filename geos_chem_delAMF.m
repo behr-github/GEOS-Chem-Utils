@@ -4,6 +4,9 @@ function [ varargout ] = geos_chem_delAMF( new_struct, old_struct, species_name,
 %   species name as a string, and a time index.  This index can be a
 %   literal index (1 for the first time, 2 for the second) or a date
 %   number.
+%
+%   The fifth argument is optional. It is a logical matrix with size 144 x
+%   91 that represents which GEOS-Chem grid cells to calculate this for.
 
 E = JLLErrors;
 
@@ -73,6 +76,8 @@ gc_sz = size(gc_loncorn)-1;
 
 if nargin < 5
     space_bool = true(gc_sz);
+elseif ~ismatrix(space_bool) || ~all(size(space_bool)==gc_sz)
+    E.badinput('The optional argument space_bool is expected to have the dimensions 144 x 91 - i.e. a 2D matrix the same size as GEOS-Chem lon x lat at 2.5 x 2 deg.');
 end
 
 % Find the chemical species we're after and the pressure fields:
