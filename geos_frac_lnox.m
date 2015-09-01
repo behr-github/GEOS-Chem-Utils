@@ -59,7 +59,7 @@ elseif numel(isSurfaceNOx) ~= numel(categories)
 end
 
 struct_fields = {prod_struct(:).fullCat};
-fields_found = containedin(categories,struct_fields);
+fields_found = ismember(categories,struct_fields);
 
 if ~all(fields_found)
     % Create a message that lists the fields not found
@@ -155,5 +155,5 @@ end
 function chk  = check_struct_type(chk_struct)
     fns = fieldnames(chk_struct);
     expected_fns = {'dataBlock','dataUnit','fullName','fullCat','tVec','modelName','modelRes','dataScale','molMass','tEdge'};
-    chk = all(containedin(expected_fns,fns));
+    chk = all(ismember(expected_fns,fns));
 end

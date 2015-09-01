@@ -35,8 +35,8 @@ tracerFile = fullfile(pathname,'tracerinfo.dat');
 diagFile = fullfile(pathname,'diaginfo.dat');
 
 Data = struct('dataBlock', [], 'dataUnit', [], 'fullName', [], 'fullCat', [], 'tVec', [], 'modelName', [], 'modelRes', [], 'dataScale', [], 'molMass', [], 'tEdge', []);
-input_title = 'Enter the %s, or cancel to exit and return.';
-D=0;
+input_title = 'Enter the %s, or: \n\t"SAT" to return fields needed to calculate column density \n\tPROD to return fields of NO production \n\tCLOUDS to get cloud level and fraction \n\t Cancel to exit and return';
+
 % Ask the user for the category and tracer names.  Loop until the user
 % cancels or enters an empty string for category or tracer; this allows the
 % user to enter multiple variables.  Note that inputdlg returns an empty
@@ -45,24 +45,59 @@ D=0;
 % use this to check if the user wants to append the data useful for dealing
 % with satellites, such as pressure, boxheight, etc.
 first_time = true;
+append_sat = false;
+append_prod = false;
+append_clouds = false;
 while true
     user_input = inputdlg(sprintf(input_title,'category'));
-    if isempty(user_input);
-        append_sat = false;
+    if isempty(user_input) % Canceling returns empty cell array
         break
     elseif isempty(user_input{1})
+        % Hitting OK on an empty string before any tracers are appended is
+        % probably a mistake - so let the user know and try again.
+        if first_time
+            box_msg = 'An empty entry does not return anything. If you want to exit with an empty structure, use "Cancel"';
+            box_title = 'Empty category';
+            uiwait(msgbox(box_msg,box_title,'error','modal'));
+            continue
+        else 
+            break
+        end
+    elseif strcmpi(user_input{1},'sat')
         append_sat = true;
+        break
+    elseif strcmpi(user_input{1},'prod')
+        append_prod = true;
+        break
+    elseif strcmpi(user_input{1},'clouds')
+        append_clouds = true;
         break
     end
     
     category = user_input{1};
     
     user_input = inputdlg(sprintf(input_title,'tracer'));
-    if isempty(user_input)
-        append_sat = false;
+    if isempty(user_input) % Canceling returns empty cell array
         break
     elseif isempty(user_input{1})
+        % Hitting OK on an empty string before any tracers are appended is
+        % probably a mistake - so let the user know and try again.
+        if first_time
+            box_msg = 'An empty entry does not return anything. If you want to exit with an empty structure, use "Cancel"';
+            box_title = 'Empty tracer';
+            uiwait(msgbox(box_msg,box_title,'error','modal'));
+            continue
+        else 
+            break
+        end
+    elseif strcmpi(user_input{1},'sat')
         append_sat = true;
+        break
+    elseif strcmpi(user_input{1},'prod')
+        append_prod = true;
+        break
+    elseif strcmpi(user_input{1},'clouds')
+        append_clouds = true;
         break
     end
     
@@ -71,26 +106,12 @@ while true
     % Change the message for successive variables.
     if first_time
         first_time = false;
-        input_title = 'Enter another %s, enter a blank field to append the variables NAIR, PSURF,and BXHEIGHT, or cancel to return immediately.';
+        input_title = 'Enter another %s, or: \n\t"SAT" to append fields needed to calculate column density \n\tPROD to append fields of NO production \n\tCLOUDS to get cloud level and fraction \n\t Press cancel or enter an empty string to exit and return.';
     end
     
     % Call the function to read the BPCH file
     try
-        [ dataBlock, dataUnit, fullName, fullCat, tVec, modelName, modelRes, dataScale, molMass, tEdge ] = readBPCHSingle(inputFile,category,tracer,tracerFile,diagFile);
-        % Increment the index of the return structure. Placing this after
-        % the read function means that if there is an caught error in it,
-        % we won't unnecessarily advance the counter.
-        D=D+1;
-        Data(D).dataBlock = dataBlock;
-        Data(D).dataUnit = dataUnit;
-        Data(D).fullName = fullName;
-        Data(D).fullCat = fullCat;
-        Data(D).tVec = tVec;
-        Data(D).modelName = modelName;
-        Data(D).modelRes = modelRes;
-        Data(D).dataScale = dataScale;
-        Data(D).molMass = molMass;
-        Data(D).tEdge = tEdge;
+        Data = read_tracer(category, tracer, inputFile, tracerFile, diagFile, Data);
     catch err
         % Catch errors resulting from the user entering a wrong category or
         % tracer.  This will present a message box that waits until the
@@ -116,22 +137,53 @@ if append_sat
     categories = {'BXHGHT','PEDGE','BXHGHT','TR_PAUSE'};
     tracers = {'NAIR','PSURF','BXHEIGHT','TP_LEVEL'};
     for a=1:numel(categories);
-        fprintf('Now retrieving %s/%s\n',categories{a},tracers{a});
-        D = D+1;
-        [ dataBlock, dataUnit, fullName, fullCat, tVec, modelName, modelRes, dataScale, molMass, tEdge ] = readBPCHSingle(inputFile,categories{a},tracers{a},tracerFile,diagFile);
-        Data(D).dataBlock = dataBlock;
-        Data(D).dataUnit = dataUnit;
-        Data(D).fullName = fullName;
-        Data(D).fullCat = fullCat;
-        Data(D).tVec = tVec;
-        Data(D).modelName = modelName;
-        Data(D).modelRes = modelRes;
-        Data(D).dataScale = dataScale;
-        Data(D).molMass = molMass;
-        Data(D).tEdge = tEdge;
+        Data = read_tracer(categories{a}, tracers{a}, inputFile, tracerFile, diagFile, Data);
     end
 end
 
+% Get all 8 categories for production of NO
+if append_prod
+    categories = {'NO_AC','NO_AN','NO_BIOB','NO_BIOF','NO_FERT','NO_LI','NO_SOIL','NO_STRT'};
+    tracers = {'NO', 'NO', 'NO', 'NO', 'NO', 'NO', 'NO', 'NO'};
+    for a=1:numel(categories)
+        Data = read_tracer(categories{a}, tracers{a}, inputFile, tracerFile, diagFile, Data);
+    end
+end
+
+% Get cloud top pressure and cloud fraction
+if append_clouds
+    categories = {'DAO_FLDS','DAO_FLDS'};
+    tracers = {'CLDFRC','CLDTOP'};
+    for a=1:numel(categories)
+        Data = read_tracer(categories{a}, tracers{a}, inputFile, tracerFile, diagFile, Data);
+    end
+end
 
 end
 
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%% SUBFUNCTIONS %%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+function Data = read_tracer(category, tracer, inputFile, tracerFile, diagFile, Data)
+    fprintf('Now retrieving %s/%s\n',category,tracer);
+    [ dataBlock, dataUnit, fullName, fullCat, tVec, modelName, modelRes, dataScale, molMass, tEdge ] = readBPCHSingle(inputFile,category,tracer,tracerFile,diagFile);
+    D = numel(Data);
+    if ~isempty(Data(D).dataBlock)
+        % Initializing Data as an empty structure puts empty matrices in
+        % each field, but still makes it be a 1x1 structure. This check
+        % figures out if its 1x1 because its freshly initialized, or
+        % because only one tracer was read in.
+        D=D+1;
+    end
+    Data(D).dataBlock = dataBlock;
+    Data(D).dataUnit = dataUnit;
+    Data(D).fullName = fullName;
+    Data(D).fullCat = fullCat;
+    Data(D).tVec = tVec;
+    Data(D).modelName = modelName;
+    Data(D).modelRes = modelRes;
+    Data(D).dataScale = dataScale;
+    Data(D).molMass = molMass;
+    Data(D).tEdge = tEdge;
+end
