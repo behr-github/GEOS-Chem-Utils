@@ -1,4 +1,4 @@
-function [ StructIn ] = integrate_geoschem_profile( StructIn, unit_conv, time_indicies, cloud_column_sel )
+function [ StructIn ] = integrate_geoschem_profile( StructIn, unit_conv, time_indicies, cloud_column_sel, aks )
 %integrate_geoschem_profile Integrates GEOS-Chem output tracers into columns
 %   While GEOS-Chem does have the capability of outputting instantaneous
 %   columns for comparison to satellite overpasses, if you didn't output
@@ -11,7 +11,7 @@ function [ StructIn ] = integrate_geoschem_profile( StructIn, unit_conv, time_in
 %       2) The unit conversion from parts-per-(whatever) to
 %       parts-per-part. for the mixing ratios, e.g. 1e-9 for ppb
 %
-%   There are also two optional argument:
+%   There are also three optional arguments:
 %       
 %       3) A description of which time indicies to use.  This can either be
 %       the literal 4th dimension indicies (as a row vector) or a 2-element
@@ -23,6 +23,9 @@ function [ StructIn ] = integrate_geoschem_profile( StructIn, unit_conv, time_in
 %       clouds. 1 will just integrate each cell above the cloud top. 2 will
 %       do an average of clear and cloudy column weighted by the cloud
 %       fraction.
+%
+%       5) aks - a matrix of averaging kernels that should have the same
+%       dimensions as the dataBlock for the species being integrated. 
 
 
 
@@ -36,7 +39,7 @@ DEBUG_LEVEL = 1;
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 % Check for 2 to 4 inputs
-narginchk(2,4);
+narginchk(2,5);
 
 % Check that the first argument is a structure
 if ~isstruct(StructIn)
@@ -108,6 +111,26 @@ elseif cld_frac_ind == 0 && cloud_column_sel > 1
     E.badinput('The input structure must contain a fullName field ''GMAO CLDFRC field'' to use cloud_column > 1');
 end
 
+% If the aks variable doesn't exist, use 1 as that will effectively remove
+% averaging kernels from the calculation. If it does, check that it is the
+% same lat/lon size and number of times (along 4th dimension) as the
+% number density dataBlock.
+if ~exist('aks','var')
+    aks = ones(size(StructIn(nair_ind).dataBlock));
+else 
+    sz_nair = size(StructIn(nair_ind).dataBlock);
+    sz_aks = size(aks);
+    if any(sz_aks(1:2) ~= sz_nair(1:2))
+        E.badinput('The AKs matrix must have the same lat/lon coordinates as the GEOS-Chem datablocks')
+    elseif size(aks,4) ~= size(StructIn(nair_ind).dataBlock,4)
+        E.badinput('The AKs matrix must have the same number of times as the GEOS-Chem datablocks');
+    elseif sz_aks(3) ~= 35
+        E.badinput('The AK functionality assumes that OMI AKs are given for a 35 pressure level grid. This does not appear to be the case.')
+    end
+end
+% Define the AK pressure vector:
+ak_pres = [1020 1010 1000 990 975 960 945 925 900 875 850 825 800 770 740 700 660 610 560 500 450 400 350 280 200 120 60 35 20 12 8 5 3 1.5 0.8];
+
 %%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%% VARIABLE PREP %%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%
@@ -172,6 +195,7 @@ for b=1:numel(StructIn)
         if cloud_column_sel > 1
             cldfrac_subset = cldfrac(:,:,a);
         end
+        ak_subset = aks(:,:,:,a);
         
         % Convert the species input from mixing ratio to number density
         %              = (mixing ratio) * (num density of air) * (m^3 / cm^3) * (parts-per-part / parts-per-{m,b,tr}illion)
@@ -185,8 +209,12 @@ for b=1:numel(StructIn)
                 %bxheight_vec = cumsum(squeeze(bxheight_subset(i,j,:))); % trapz needs x-coordinates, but bxheight is the actual height of each box
                 bxheight_vec = squeeze(bxheight_subset(i,j,:));
                 species_vec = squeeze(species_subset(i,j,:));
-                p_vec = squeeze(p_edges_subset(i,j,1:end-1)); % There is always one more pressure edge than box
+                p_vec = squeeze(p_edges_subset(i,j,1:end-1)); % There is usually one more pressure edge than box, and if we lose one, it's in the stratosphere anyway
                 tplevel_val = tplevel_subset(i,j);
+                
+                ak_vec = squeeze(ak_subset(i,j,:));
+                % Interpolate the AKs to the GC pressures
+                ak_interp = interp1(ak_pres, ak_vec, p_vec, 'linear', 'extrap');
                 
                 if cloud_column_sel > 0
                     cldtop_val = cldtop_subset(i,j);
@@ -199,16 +227,18 @@ for b=1:numel(StructIn)
                 % troposphere
                 bxheight_vec = bxheight_vec(1:tplevel_val);
                 species_vec = species_vec(1:tplevel_val);
+                ak_interp = ak_interp(1:tplevel_val);
                 
                 % Integrate the concentration using the centerpoint rule
                 %columns(i,j,a) = trapz(bxheight_vec, species_vec);
-                clear_column = sum(bxheight_vec .* species_vec);
+                clear_column = sum(bxheight_vec .* species_vec .* ak_interp);
                 
                 % Now do the same from the cloud top, if we're supposed to 
                 if cloud_column_sel > 0
                     bxheight_vec_cld = bxheight_vec(cldtop_val:end);
                     species_vec_cld = species_vec(cldtop_val:end);
-                    cloud_column= sum(bxheight_vec_cld .* species_vec_cld);
+                    ak_cld = ak_interp(cldtop_val:end);
+                    cloud_column= sum(bxheight_vec_cld .* species_vec_cld .* ak_cld);
                 end
                 
                 % Now we will determine how to output the columns.
