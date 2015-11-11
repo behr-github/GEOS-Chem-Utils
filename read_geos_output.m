@@ -20,10 +20,21 @@ addpath('~/Documents/MATLAB/GEOS_Chem_Utils/BPCH_Functions');
 % Get the output file from the user, and use the directory to find the
 % tracerinfo and diaginfo files.
 
-getfile_title = 'Select the output file to read. tracerinfo and diaginfo should be in the same folder.';
-[output_filename, pathname] = uigetfile('*',getfile_title);
-if output_filename == 0;
-    error(E.userCancel);
+if isDisplay
+    getfile_title = 'Select the output file to read. tracerinfo and diaginfo should be in the same folder.';
+    [output_filename, pathname] = uigetfile('*',getfile_title);
+    if output_filename == 0;
+        error(E.userCancel);
+    end
+else
+    user_filepath = input('Enter the path to the bpch file', 's');
+    if isempty(user_filepath)
+        E.userCancel;
+    elseif ~exist(user_filepath,'file')
+        E.filenotfound('bpch')
+    end
+    [pathname, filename, fileext] = fileparts(user_filepath);
+    output_filename = [filename, fileext];
 end
 
 if ~exist(fullfile(pathname,'tracerinfo.dat'),'file') || ~exist(fullfile(pathname,'diaginfo.dat'),'file')
@@ -49,16 +60,26 @@ append_sat = false;
 append_prod = false;
 append_clouds = false;
 while true
-    user_input = inputdlg(sprintf(input_title,'category'));
+    if isDisplay
+        user_input = inputdlg(sprintf(input_title,'category'));
+    else
+        temp_input = input(sprintf(input_title, 'category'), 's');
+        user_input{1} = temp_input;
+    end
     if isempty(user_input) % Canceling returns empty cell array
         break
     elseif isempty(user_input{1})
         % Hitting OK on an empty string before any tracers are appended is
         % probably a mistake - so let the user know and try again.
         if first_time
-            box_msg = 'An empty entry does not return anything. If you want to exit with an empty structure, use "Cancel"';
-            box_title = 'Empty category';
-            uiwait(msgbox(box_msg,box_title,'error','modal'));
+            if isDisplay
+                box_msg = 'An empty entry does not return anything. If you want to exit with an empty structure, use "Cancel"';
+                box_title = 'Empty category';
+                uiwait(msgbox(box_msg,box_title,'error','modal'));
+            else
+                box_msg = '\nAn empty entry does not return anything. If you want to exit with an empty structure, press Ctrl+C\n';
+                fprintf(box_msg);
+            end
             continue
         else 
             break
@@ -76,16 +97,26 @@ while true
     
     category = user_input{1};
     
-    user_input = inputdlg(sprintf(input_title,'tracer'));
+    if isDisplay
+        user_input = inputdlg(sprintf(input_title,'tracer'));
+    else
+        temp_input = input(sprintf(input_title, 'tracer'), 's');
+        user_input{1} = temp_input;
+    end
     if isempty(user_input) % Canceling returns empty cell array
         break
     elseif isempty(user_input{1})
         % Hitting OK on an empty string before any tracers are appended is
         % probably a mistake - so let the user know and try again.
         if first_time
-            box_msg = 'An empty entry does not return anything. If you want to exit with an empty structure, use "Cancel"';
-            box_title = 'Empty tracer';
-            uiwait(msgbox(box_msg,box_title,'error','modal'));
+            if isDisplay
+                box_msg = 'An empty entry does not return anything. If you want to exit with an empty structure, use "Cancel"';
+                box_title = 'Empty tracer';
+                uiwait(msgbox(box_msg,box_title,'error','modal'));
+            else
+                box_msg = '\nAn empty entry does not return anything. If you want to exit with an empty structure, press Ctrl+C\n';
+                fprintf(box_msg);
+            end
             continue
         else 
             break

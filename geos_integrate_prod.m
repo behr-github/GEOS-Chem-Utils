@@ -1,4 +1,4 @@
-function [ total_prod ] = geos_integrate_prod( varargin )
+function [ total_prod, db ] = geos_integrate_prod( varargin )
 %GEOS_INTEGRATE_PROD Calculate total production of a category
 %   This will calculate the total number of MOLES (not molecules) of a
 %   species produced in GEOS-Chem. It can take arguments as:
@@ -77,6 +77,11 @@ area = reshape(area,[],1);
 % each structure and add it to the running total.
 
 total_prod = 0;
+area_list = [];
+db.prod = [];
+db.n_sec = [];
+db.tvec = [];
+
 
 for a=1:numel(Emis)
     % Reshape so that all the spatial coordinates are strung out along the
@@ -94,12 +99,16 @@ for a=1:numel(Emis)
     end
     
     this_area = repmat(area, n_levels, 1);
+    area_list = cat(2, area_list, this_area);
     
     for b=1:n_times
         t_vec = datevec(Emis(a).tEdge(b:b+1));
         n_sec = etime(t_vec(2,:), t_vec(1,:));
         
-        total_prod = total_prod + nansum(this_emis(:,1) .* this_area * n_sec, 1);
+        total_prod = total_prod + nansum(this_emis(:,b) .* this_area * n_sec, 1);
+        db.prod = cat(1,db.prod,total_prod);
+        db.n_sec = cat(1,db.n_sec,n_sec);
+        db.tvec = cat(1, db.tvec, t_vec');
     end
     
 end

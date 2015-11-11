@@ -6,7 +6,7 @@ function [ varargout ] = misc_gc_plotting_fxns( plttype, varargin )
 %
 %   Josh Laughner <joshlaugh5@gmail.com> 2 Jul 2015
 
-DEBUG_LEVEL = 1;
+DEBUG_LEVEL = 2;
 E = JLLErrors;
 
 plttype = lower(plttype);
@@ -31,6 +31,14 @@ switch plttype
         plot_lnox_col_enhnc_diff(varargin{:}, 'relative', true);
     case 'meridional'
         plot_meridional_avg(varargin{:});
+    case 'meridional-sat'
+        add_sat_mer_avg_to_fig(varargin{:});
+    case 'meridional_table'
+        varargout{1} = avg_meridional_avg_table(varargin{:});
+    case 'grid_mls'
+        varargout{1} = grid_mls_data_to_gc(varargin{:});
+    case 'grid_month_omno2'
+        [varargout{1}, varargout{2}] = grid_omno2d_monthly(varargin{:});
     otherwise
         fprintf('Did not recognize plot type\n');
         return
@@ -174,6 +182,202 @@ end
             for a=1:sz_tp(1)
                 for b=1:sz_tp(2)
                     mask(a,b,tplev(a,b,t):end,t) = false;
+                end
+            end
+        end
+    end
+
+    function add_sat_mer_avg_to_fig(fig, specie, region, gridded_data, lnox_crit, noregrid)
+        % Will call sat_meridional_avg to calculate the meridional average
+        % of satellite data for the given region then add that to the
+        % figure given by the handle fig.  The figure should have a legend
+        % already.  If you have pregridded data, pass as the final argument
+        % to save time gridding.  This WILL NOT check that you are adding
+        % a like species to the figure, so it will happily say put NO2
+        % columns on an HNO3 concentration plot or put data from N. Am. on
+        % SE Asia. Just warning you...
+        
+        % Check input
+        if ~ishandle(fig) || ~strcmpi(fig.Type, 'figure')
+            E.badinput('fig must be a handle to a figure')
+        end
+        if ~exist('gridded_data','var')
+            gridded_data = []; % placeholder, sat_meridional_avg will recognize this as indicating gridding must be done.
+        end
+        if ~exist('lnox_crit','var')
+            lnox_crit = [];
+        end
+        if ~exist('noregrid','var')
+            noregrid = 0;
+        end
+        
+        ax = findobj(fig,'Type','axes');
+        leg = findobj(fig,'Type','legend');
+        
+        [sat_lon, sat_avg] = sat_meridional_avg(specie, region, gridded_data, lnox_crit, noregrid);
+        
+        line(sat_lon, sat_avg, 'color', 'k', 'linewidth', 1.5, 'linestyle', '--', 'parent', ax);
+        lstrings = leg.String;
+        lstrings{end+1} = 'Satellite';
+        legend(lstrings{:});
+    end
+
+    function [sat_lon, sat_avg] = sat_meridional_avg(specie, region, gridded_data, lnox_crit, noregrid)
+        % Calculates a meridional average for satellite measurements of
+        % NO2 (column), O3, or HNO3. Needs which species (as a string),
+        % one of the regions (also a string). Hard coded to do 2012 right
+        % now.
+        [xx,yy] = region_xxyy(region);
+        % Add one more point because we actually want to subset the corners
+        % not the centers.
+        xx_centers = xx; % we'll need this at the end.
+        yy_centers = yy;
+        xx(find(xx,1,'last')+1) = true;
+        yy(find(yy,1,'last')+1) = true;
+        [gloncorn, glatcorn] = geos_chem_corners;
+        % geos_chem_corners outputs in lat x lon, so transpose just because
+        % I'm more used (now) to having lon first.
+        gloncorn = gloncorn(yy,xx)';
+        glatcorn = glatcorn(yy,xx)';
+        
+        switch lower(specie)
+            case 'no2'
+                if ~exist('gridded_data','var') || isempty(gridded_data)
+                    addpath('/Users/Josh/Documents/MATLAB/Non BEHR Satellite/OMI Utils');
+                    gridded_data = omno2d_timeavg('2012-01-01','2012-12-31');
+                end
+                [omno2d_lon, omno2d_lat] = omno2d_centers;
+                [lonlim, latlim] = define_regions(region);
+                xx_omi = omno2d_lon(:,1) >= lonlim(1) & omno2d_lon(:,1) <= lonlim(2);
+                yy_omi = omno2d_lat(1,:) >= latlim(1) & omno2d_lat(1,:) <= latlim(2);
+                
+                if exist('lnox_crit','var') && ~isempty(lnox_crit)
+                    gridded_data(~lnox_crit) = nan;
+                end
+                
+                if size(gridded_data,3)>1
+                    gridded_data = nanmean(gridded_data,3);
+                end
+                
+                if size(gridded_data,1) * size(gridded_data,2) > 144*91
+                    if noregrid
+                        gridded_data = gridded_data(xx_omi,yy_omi);
+                    else
+                        gridded_data = grid_omno2d_to_gc(gridded_data, omno2d_lon, omno2d_lat, gloncorn, glatcorn);
+                    end
+                else
+                    gridded_data = gridded_data(xx_centers, yy_centers);
+                end
+                
+                if noregrid
+                    
+                    sat_lon = omno2d_lon(xx_omi,1);
+                else
+                    sat_lon = geos_chem_centers('2x25');
+                    sat_lon = sat_lon(xx_centers);
+                end
+            otherwise
+                if ~exist('gridded_data','var') || isempty(gridded_data)
+                    gridded_data = grid_mls_data_to_gc(gloncorn, glatcorn,specie);
+                else
+                    gridded_data = gridded_data(xx_centers,yy_centers);
+                end
+                sat_lon = geos_chem_centers('2x25');
+                sat_lon = sat_lon(xx_centers);
+        end
+        
+        % Make the meridional average
+        sat_avg = nanmean(gridded_data,2)';
+        
+    end
+
+    function [gridded_monthly_omno2d, monthly_omno2d] = grid_omno2d_monthly(gc_loncorn, gc_latcorn)
+        % Does monthly time averages of OMNO2d data then grids it to GC
+        % resolution.
+        [omno2d_lon, omno2d_lat] = omno2d_centers;
+        monthly_omno2d = nan(size(omno2d_lon));
+        gridded_monthly_omno2d = nan(size(gc_loncorn)-1);
+        for m=1:12
+            sdate = sprintf('2012-%02d-01',m);
+            edate = sprintf('2012-%02d-%02d',m,eomday(2012,m));
+            monthly_omno2d(:,:,m) = omno2d_timeavg(sdate,edate);
+            gridded_monthly_omno2d(:,:,m) = grid_omno2d_to_gc(monthly_omno2d(:,:,m), omno2d_lon, omno2d_lat, gc_loncorn, gc_latcorn);
+        end
+        
+    end
+
+    function gridded_omno2d = grid_omno2d_to_gc(omno2d_no2, omno2d_lon, omno2d_lat, gc_loncorn, gc_latcorn)
+        % Averages OMNO2d data to GEOS-Chem resolution. Needs OMNO2d data,
+        % longitude, and latitude (all should be the same size) and the
+        % GEOS-Chem corner points to average to.
+        
+        % Check input
+        if ndims(omno2d_no2) ~= ndims(omno2d_lon) || ndims(omno2d_no2) ~= ndims(omno2d_lat) || any(size(omno2d_no2) ~= size(omno2d_lon)) || any(size(omno2d_no2) ~= size(omno2d_lat))
+            E.sizeMismatch('omno2d_lon','omno2d_lat','omno2d_no2')
+        end
+        
+        gridded_omno2d = nan(size(gc_loncorn)-1); % one smaller to switch from # of corners to # of grid cells
+        
+        % Loop over GC grid cells and find which OMNO2d data belongs in it
+        for a=1:size(gridded_omno2d,1)
+            if DEBUG_LEVEL > 1; fprintf('%d ',a); end
+            for b=1:size(gridded_omno2d,2)
+                xx = omno2d_lon >= gc_loncorn(a,b) & omno2d_lon < gc_loncorn(a+1,b+1) & omno2d_lat >= gc_latcorn(a,b) & omno2d_lat < gc_latcorn(a+1,b+1);
+                gridded_omno2d(a,b) = nanmean(omno2d_no2(xx));
+            end
+        end
+        if DEBUG_LEVEL > 1; fprintf('\n'); end
+    end
+
+    function gridded_mls = grid_mls_data_to_gc(gc_loncorn, gc_latcorn, specie)
+        % Calculates a running average of MLS data for the given GC
+        % longitude and latitude corners.  Intended to be called from
+        % sat_meridional_avg() or externally to pre-grid data and save
+        % yourself time. (In that case, pass a full gc_loncorn/latcorn
+        % matrix - don't cut it down into regions.)
+        
+        switch lower(specie)
+            case 'o3'
+                filepath = '/Volumes/share-sat/SAT/MLS/O3v4-2/2012';
+                files = dir(fullfile(filepath,'*.he5'));
+                pressure_range = [350 200];
+            case 'hno3'
+                filepath = '/Volumes/share-sat/SAT/MLS/HNO3v4-2/2012';
+                files = dir(fullfile(filepath,'*.he5'));
+                pressure_range = [250 200];
+        end
+        
+        gridded_mls = zeros(size(gc_loncorn)-1);
+        count = zeros(size(gc_loncorn)-1);
+        
+        addpath('/Users/Josh/Documents/MATLAB/Non BEHR Satellite/MLS');
+        
+        % Do the gridding and averaging
+        for f=1:numel(files)
+            if DEBUG_LEVEL > 1
+                fprintf('Binning file %d of %d\n',f,numel(files));
+            end
+            Data = read_mls_data(fullfile(filepath,files(f).name));
+            lon = Data.Longitude;
+            lat = Data.Latitude;
+            
+            % Find which levels of the MLS retrieval are in the desired
+            % pressure range
+            pp = Data.Pressure >= min(pressure_range) & Data.Pressure <= max(pressure_range);
+            
+            for a = 1:size(gridded_mls,1)
+                for b = 1:size(gridded_mls,2)
+                    % Find the elements from the MLS data that fall in each
+                    % GC grid cell and add them to the running average
+                    xx = lon >= gc_loncorn(a,b) & lon < gc_loncorn(a+1,b+1) & lat >= gc_latcorn(a,b) & lat < gc_latcorn(a+1,b+1);
+                    if sum(xx) < 1
+                        continue
+                    end
+                    c = sum(xx);
+                    d = nansum(Data.(upper(specie))(pp,xx));
+                    
+                    gridded_mls(a,b) = (gridded_mls(a,b) * count(a,b) + d) / (count(a,b) + c);
+                    count(a,b) = count(a,b) + c;
                 end
             end
         end
@@ -364,28 +568,8 @@ end
         set(gca,'ygrid','on');
     end
 
-    function plot_meridional_avg(dataStruct, criteria, varargin)
-        % Will produce a figure like Fig. 5 in Randall Martin's 2007
-        % lightning NOx paper, where the NO2 columns or O3/HNO3
-        % concentration are averaged meridionally for places that fit the
-        % criteria. Req. 2 arguments: dataStruct must be one structure
-        % output from read_geos_output or cleaned up from the ts_satellite
-        % python reading code, and the criteria matrix (a logical matrix
-        % true wherever the data should be included, i.e lightning >60% of
-        % emissions). A troposphere mask - this can either be a logical
-        % matrix the same size as the dataBlock or the tropopause level
-        % output structure from read_geos_output - is required if doing
-        % levels instead of columns.
-        %
-        % If plotting a level, you'll need to include a matrix of pressures
-        % and the maximum pressure to plot.
-        %
-        % Optional arguments: a handle to a figure will plot on that figure
-        % instead of creating a new one. The string 'columns' will cause it
-        % to average columns rather than concentrations. Other strings will
-        % specify what lon/lat limits to apply: 'na' (north america), 'sa'
-        % (south america), 'naf' (north africa), 'saf' (south africa), and
-        % 'seas' (southeast asia).
+    function [avg_data, glon, region, p_max, column_bool, fig] = meridional_avg(dataStruct, criteria, varargin)
+
         
         % Parse the optional arguments
         fig = [];
@@ -442,7 +626,7 @@ end
                 E.badinput('A matrix of pressures must be give if plotting concentrations')
             elseif isempty(tp_mask)
                 E.badinput('A troposphere mask must be given if plotting a concentration')
-            elseif isstruct(tp_mask) && ~strcmpi(tp_mask.fullName,'')
+            elseif isstruct(tp_mask) && ~strcmpi(tp_mask.fullName,'Tropopause level')
                 E.badinput('The tropopause mask is a structure but does not seem to refer to the tropopause level')
             end
             
@@ -484,8 +668,33 @@ end
         data = data(xx,yy,:);
         
         avg_data = nanmean(nanmean(data,3),2);
+        glon = glon(xx);
+    end
+
+    function plot_meridional_avg(dataStruct, criteria, varargin)
+        % Will produce a figure like Fig. 5 in Randall Martin's 2007
+        % lightning NOx paper, where the NO2 columns or O3/HNO3
+        % concentration are averaged meridionally for places that fit the
+        % criteria. Req. 2 arguments: dataStruct must be one structure
+        % output from read_geos_output or cleaned up from the ts_satellite
+        % python reading code, and the criteria matrix (a logical matrix
+        % true wherever the data should be included, i.e lightning >60% of
+        % emissions). A troposphere mask - this can either be a logical
+        % matrix the same size as the dataBlock or the tropopause level
+        % output structure from read_geos_output - is required if doing
+        % levels instead of columns.
+        %
+        % If plotting a level, you'll need to include a matrix of pressures
+        % and the maximum pressure to plot.
+        %
+        % Optional arguments: a handle to a figure will plot on that figure
+        % instead of creating a new one. The string 'columns' will cause it
+        % to average columns rather than concentrations. Other strings will
+        % specify what lon/lat limits to apply: 'na' (north america), 'sa'
+        % (south america), 'naf' (north africa), 'saf' (south africa), and
+        % 'seas' (southeast asia).
         
-        
+        [avg_data, glon, region, p_max, column_bool, fig] = meridional_avg(dataStruct, criteria, varargin{:});
         
         % Create or select the figure as necessary
         if isempty(fig)
@@ -495,7 +704,7 @@ end
             hold on
         end
         
-        plot(glon(xx)', avg_data);
+        plot(glon', avg_data);
         
         if isempty(fig)
             species_name = regexprep(dataStruct.fullName,'[_^]',' ');
@@ -521,7 +730,45 @@ end
         end
     end
 
-
+    function [ avg_table ] = avg_meridional_avg_table(dataStruct_new, criteria_new, dataStruct_old, criteria_old, varargin)
+       % Takes the meridional averages for all 6 regions and then averages
+       % over the longitudes, giving a table of absolute and relative
+       % average differences in meridional averages by region. See
+       % plot_meridional_avg for a description of the inputs, with two
+       % differences: 
+       %    One, you must input two data structures (the "new" and "old"
+       %    cases) as this is computing a difference.
+       %
+       %    Two, do not input a region as this function will reject it
+       %    before calling meridional_avg, as this function will supply the
+       %    regions itself.
+       
+       % This will be used in the table, so it should be a column vector
+       regions = {'na';'sa';'naf';'saf';'seas';'neur'};
+       
+       for a=1:numel(varargin)
+           if ischar(varargin{a})
+               xx = ismember(varargin{a}, regions);
+               
+               if any(xx)
+                   E.badinput('A region ("%s") was detected in input; remove this and try again. This function will iterate over all regions internally', varargin{a});
+               end
+           end
+       end
+       
+       AbsoluteDifference = nan(size(regions));
+       RelativeDifference = nan(size(regions));
+       
+       for a=1:numel(regions)
+           avg_data_new = meridional_avg(dataStruct_new, criteria_new, varargin{:}, regions{a});
+           avg_data_old = meridional_avg(dataStruct_old, criteria_old, varargin{:}, regions{a});
+           
+           AbsoluteDifference(a) = nanmean(avg_data_new - avg_data_old);
+           RelativeDifference(a) = nanmean((avg_data_new - avg_data_old) ./ avg_data_old * 100);
+       end
+       
+       avg_table = table(AbsoluteDifference, RelativeDifference, 'RowNames', regions);
+    end
 
 end
 
