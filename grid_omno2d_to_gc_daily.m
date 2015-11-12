@@ -30,7 +30,7 @@ parfor d=1:366
     todays_weight = h5read(hinfo.Filename, h5dsetname(hinfo,1,2,1,1,'Weight'));
     
     % Ignore negative values - they are either fill values or unphysical
-    todays_weight(todays_no2<0) = 0;
+    todays_weight(todays_no2<0) = nan;
     
     gridded_daily_omno2d(:,:,d) = grid_omno2d_to_gc(todays_no2, omno2d_lon, omno2d_lat, gc_loncorn, gc_latcorn, todays_weight);
 end
@@ -55,7 +55,7 @@ gridded_omno2d = nan(size(gc_loncorn)-1); % one smaller to switch from # of corn
 for a=1:size(gridded_omno2d,1)
     for b=1:size(gridded_omno2d,2)
         xx = omno2d_lon >= gc_loncorn(a,b) & omno2d_lon < gc_loncorn(a+1,b+1) & omno2d_lat >= gc_latcorn(a,b) & omno2d_lat < gc_latcorn(a+1,b+1);
-        gridded_omno2d(a,b) = nansum(omno2d_no2(xx) .* omno2d_weights(xx)) / nansum(omno2d_weights(xx));
+        gridded_omno2d(a,b) = nansum2(omno2d_no2(xx) .* omno2d_weights(xx)) / nansum2(omno2d_weights(xx));
     end
 end
 end
