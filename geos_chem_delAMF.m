@@ -335,7 +335,7 @@ parfor a=1:gc_sz(1)
     old_amf_grid(a,:) = old_amf_row;
 end
 
-if nargout < 2
+if nargout < 1
     putvar(new_amf_grid, old_amf_grid);
 else
     varargout{1} = new_amf_grid;

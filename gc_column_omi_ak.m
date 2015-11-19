@@ -68,12 +68,16 @@ if isempty(onCluster)
     onCluster = false;
 end
 
+fprintf('onCluster = %d\n',onCluster);
+
 global omi_he5_dir
 if onCluster && isempty(omi_he5_dir)
     E.runscript_error('omi_he5_dir')
-else
+elseif ~onCluster
     omi_he5_dir = '/Volumes/share-sat/SAT/OMI/OMNO2';
 end
+
+fprintf('OMI dir = %s\n',omi_he5_dir');
 
 [gc_loncorn, gc_latcorn] = geos_chem_corners;
 
@@ -85,8 +89,10 @@ gc_ndens_air_data = gc_ndens_air.dataBlock;
 gc_tp_data = gc_tp.dataBlock;
 columns = nan(size(gc_tp_data));
 
-for d=1:numel(tVec)
-    [omi_aks, omi_lon, omi_lat] = load_omi_files(year(tVec(d)), month(tVec(d)), day(tVec(d)));
+parfor d=1:numel(tVec)
+    fprintf('Loading OMI files for %s\n',datestr(tVec(d)));
+    [omi_aks, omi_lon, omi_lat] = load_omi_files(year(tVec(d)), month(tVec(d)), day(tVec(d)), omi_he5_dir);
+    fprintf('Binnind OMI AKs for %s\n',datestr(tVec(d)));
     binned_aks = bin_omi_aks(gc_loncorn, gc_latcorn, omi_aks, omi_lon, omi_lat);
 
     % binned_aks is output in ak_vec x gc_nlat x gc_nlon x time, rearrange to
@@ -103,13 +109,15 @@ gc_no2.Columns = columns;
 
 end
 
-function [omi_aks, omi_lon, omi_lat] = load_omi_files(yr, mn, dy)
+function [omi_aks, omi_lon, omi_lat] = load_omi_files(yr, mn, dy, omi_he5_dir)
 E = JLLErrors;
 
-global omi_he5_dir
 full_path = fullfile(omi_he5_dir,sprintf('%04d',yr),sprintf('%02d',mn));
 file_pattern = sprintf('OMI-Aura_L2-OMNO2_%04dm%02d%02d*.he5',yr,mn,dy);
 F = dir(fullfile(full_path, file_pattern));
+
+fprintf('%s\n',full_path);
+fprintf('%s\n',file_pattern);
 
 if isempty(F)
     E.filenotfound(sprintf('OMI files for %04d-%02d-%02d',yr,mn,dy));
@@ -123,7 +131,7 @@ omi_lon = [];
 omi_lat = [];
 
 for a=1:numel(F)
-    fprintf('Loading file %d of %d\n',a,numel(F));
+    %fprintf('Loading file %d of %d\n',a,numel(F));
     hi = h5info(fullfile(full_path, F(a).name));
     omi.sw = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,1,'ScatteringWeight')));
     omi.sw(omi.sw < 1e-29) = nan;
@@ -216,7 +224,7 @@ gc_nlat = size(gc_loncorn,1)-1;
 gc_nlon = size(gc_loncorn,2)-1;
 aks = nan(size(omi_aks,1), gc_nlat, gc_nlon);
 for a=1:gc_nlat
-    fprintf('Binning %.1f%% complete\n',a/gc_nlat*100);
+    %fprintf('Binning %.1f%% complete\n',a/gc_nlat*100);
     for b=1:gc_nlon
         x1 = gc_loncorn(a,b);
         x2 = gc_loncorn(a,b+1);
