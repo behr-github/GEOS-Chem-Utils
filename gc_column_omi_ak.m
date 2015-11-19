@@ -1,4 +1,4 @@
-function [ gc_no2 ] = gc_column_omi_ak( gc_no2, gc_bxhght, gc_pressure, gc_ndens_air, gc_tp )
+function [ gc_no2 ] = gc_column_omi_ak( gc_no2, gc_bxhght, gc_pressure, gc_ndens_air, gc_tp, retrieval )
 %GC_COLUMN_OMI_AK Applies OMI averaging kernels to calculation of GEOS-Chem columns.
 %   Averaging kernels are used to describe how a change in the "true" state
 %   of a system is expressed as a change in the observations of a system.
@@ -74,10 +74,10 @@ global omi_he5_dir
 if onCluster && isempty(omi_he5_dir)
     E.runscript_error('omi_he5_dir')
 elseif ~onCluster
-    omi_he5_dir = '/Volumes/share-sat/SAT/OMI/OMNO2';
+    omi_he5_dir = '/Volumes/share-sat/SAT/OMI/DOMINOv2.0';
 end
 
-fprintf('OMI dir = %s\n',omi_he5_dir');
+fprintf('OMI dir = %s\n',omi_he5_dir);
 
 [gc_loncorn, gc_latcorn] = geos_chem_corners;
 
@@ -89,20 +89,40 @@ gc_ndens_air_data = gc_ndens_air.dataBlock;
 gc_tp_data = gc_tp.dataBlock;
 columns = nan(size(gc_tp_data));
 
-parfor d=1:numel(tVec)
+for d=1:numel(tVec)
     fprintf('Loading OMI files for %s\n',datestr(tVec(d)));
-    [omi_aks, omi_lon, omi_lat] = load_omi_files(year(tVec(d)), month(tVec(d)), day(tVec(d)), omi_he5_dir);
-    fprintf('Binnind OMI AKs for %s\n',datestr(tVec(d)));
-    binned_aks = bin_omi_aks(gc_loncorn, gc_latcorn, omi_aks, omi_lon, omi_lat);
-
-    % binned_aks is output in ak_vec x gc_nlat x gc_nlon x time, rearrange to
-    % gc_nlon x gc_nlat x ak_vec x time.
-    binned_aks = permute(binned_aks, [3 2 1 4]);
+    if strcmpi(retrieval,'omno2')
+        [omi_aks, omi_lon, omi_lat] = load_omi_files(year(tVec(d)), month(tVec(d)), day(tVec(d)), omi_he5_dir);
+        fprintf('Binnind OMI AKs for %s\n',datestr(tVec(d)));
+        binned_aks = bin_omi_aks(gc_loncorn, gc_latcorn, omi_aks, omi_lon, omi_lat);
+        
+        % binned_aks is output in ak_vec x gc_nlat x gc_nlon, rearrange to
+        % gc_nlon x gc_nlat x ak_vec x time.
+        binned_aks = permute(binned_aks, [3 2 1]);
+        
+        columns(:,:,d) = integrate_omi_profile(gc_no2_data(:,:,:,d), gc_bxhght_data(:,:,:,d), gc_pressure_data(:,:,:,d), gc_ndens_air_data(:,:,:,d), gc_tp_data(:,:,d), binned_aks);
+    elseif strcmpi(retrieval,'domino')
+        [omi_aks, omi_pres, omi_pres_edge, omi_lon, omi_lat] = load_domino_files(year(tVec(d)), month(tVec(d)), day(tVec(d)), omi_he5_dir);
+        fprintf('Binnind OMI AKs for %s\n',datestr(tVec(d)));
+        [binned_aks, binned_pres, binned_pres_edge] = bin_omi_aks(gc_loncorn, gc_latcorn, omi_aks, omi_lon, omi_lat, omi_pres, omi_pres_edge);
+        
+        % binned_aks and binned_pres are output in gc_nlat x gc_nlon with
+        % the ak vectors in each cell, rearrange so that lon is the first
+        % dimension
+        binned_aks = binned_aks';
+        binned_pres = binned_pres';
+        binned_pres_edge = binned_pres_edge';
+        
+        columns(:,:,d) = integrate_domino_profile(gc_no2_data(:,:,:,d), gc_bxhght_data(:,:,:,d), gc_pressure_data(:,:,:,d), gc_ndens_air_data(:,:,:,d), gc_tp_data(:,:,d), binned_aks, binned_pres, binned_pres_edge);
+    else
+        E.notimplemented(retrieval)
+    end
+    
     
     %tmp = integrate_geoschem_profile(cat(1,gc_no2, gc_bxhght, gc_pressure, gc_ndens_air, gc_tp), 1e-9, [], 0, binned_aks);
     %gc_no2.Columns = tmp(1).Columns;
     
-    columns(:,:,d) = integrate_omi_profile(gc_no2_data(:,:,:,d), gc_bxhght_data(:,:,:,d), gc_pressure_data(:,:,:,d), gc_ndens_air_data(:,:,:,d), gc_tp_data(:,:,d), binned_aks);
+    
 end
 
 gc_no2.Columns = columns;
@@ -179,7 +199,83 @@ end
 
 end
 
-function aks = bin_omi_aks(gc_loncorn, gc_latcorn, omi_aks, omi_lon, omi_lat)
+function [omi_aks, omi_pres, omi_pres_edge, omi_lon, omi_lat] = load_domino_files(yr, mn, dy, omi_he5_dir)
+E = JLLErrors;
+
+full_path = fullfile(omi_he5_dir,sprintf('%04d',yr),sprintf('%02d',mn));
+file_pattern = sprintf('OMI-Aura_L2-OMDOMINO_%04dm%02d%02d*.he5',yr,mn,dy);
+F = dir(fullfile(full_path, file_pattern));
+
+fprintf('%s\n',full_path);
+fprintf('%s\n',file_pattern);
+
+if isempty(F)
+    E.filenotfound(sprintf('OMI files for %04d-%02d-%02d',yr,mn,dy));
+end
+
+
+% We'll concatenate along the along-track dimension since that varys with
+% each swath and the other two are constant.
+omi_aks = [];
+omi_pres = [];
+omi_pres_edge = [];
+omi_lon = [];
+omi_lat = [];
+
+for a=1:numel(F)
+    % Load in data and remove fill values
+    hi = h5info(fullfile(full_path, F(a).name));
+    omi.aks = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,1,'AveragingKernel')))*0.001; 
+    omi.aks(omi.aks<-30) = nan;
+    omi.TM4PresA = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,1,'TM4PressurelevelA')))*0.01; % in Pa, want hPa.
+    omi.TM4PresA(omi.TM4PresA<-1e30) = nan;
+    omi.TM4PresB = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,1,'TM4PressurelevelB')));
+    omi.TM4PresB(omi.TM4PresB<-1e30) = nan;
+    omi.TM4SurfP = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,1,'TM4SurfacePressure')));
+    omi.TM4SurfP(omi.TM4SurfP<-1e30) = nan;
+
+    % Rearrange so that the vertical coordinate is first
+    omi.aks = permute(omi.aks, [3 1 2]);
+    
+    % Calculate the pressure levels for each pixel. We'll also need the
+    % bottom pressure edges to compare with box height in the integration
+    % function. We'll assume that the edges are half way in between the
+    % levels, except for the first one, which will be at the surface.
+    omi.PresLevs = nan(size(omi.aks));
+    omi.PresEdges = nan(size(omi.aks) + [1 0 0]); % need extra vertical coordinate for edge
+    for x=1:size(omi.TM4SurfP,1)
+        for y=1:size(omi.TM4SurfP,2)
+            omi.PresLevs(:,x,y) = omi.TM4PresA + omi.TM4SurfP(x,y) .* omi.TM4PresB;
+            omi.PresEdges(1,x,y) = omi.TM4SurfP(x,y);
+            omi.PresEdges(2:end-1,x,y) = (omi.PresLevs(1:end-1,x,y) + omi.PresLevs(2:end,x,y)) / 2;
+            omi.PresEdges(end,x,y) = 0.5 * omi.PresLevs(end,x,y); % set the final edge to 1/2 the box center - it's stratosphere, it won't matter anyway.
+        end
+    end
+    
+    % These are fields needed to reject pixels
+    omi.CloudFraction = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,1,'CloudFraction')))*1e-3;
+    omi.CloudFraction(omi.CloudFraction<0) = nan;
+    omi.ColumnAmountNO2Trop = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,1,'TroposphericVerticalColumn')))*1e15;
+    omi.TropColumnFlag = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,1,'TroposphericColumnFlag')));
+    omi.Albedo = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,1,'SurfaceAlbedo')))*1e-4;
+    
+    bad_vals = omi.CloudFraction > 0.3 | omi.ColumnAmountNO2Trop < 0 | omi.TropColumnFlag < 0 | omi.Albedo > 0.3;
+    omi.aks(:,bad_vals) = nan;
+    omi.PresLevs(:,bad_vals) = nan;
+    
+    omi_aks = cat(3,omi_aks,omi.aks);
+    omi_pres = cat(3,omi_pres,omi.PresLevs);
+    omi_pres_edge = cat(3, omi_pres_edge, omi.PresEdges);
+    
+    this_lon = h5read(hi.Filename, h5dsetname(hi,1,2,1,2,'Longitude'));
+    this_lat = h5read(hi.Filename, h5dsetname(hi,1,2,1,2,'Latitude'));
+    omi_lon = cat(2, omi_lon, this_lon);
+    omi_lat = cat(2, omi_lat, this_lat);
+end
+
+end
+
+function varargout = bin_omi_aks(gc_loncorn, gc_latcorn, omi_aks, omi_lon, omi_lat, omi_pres, omi_pres_edge)
 % This subfunction will handle the binning of OMNO2 averaging kernels to
 % the GEOS-Chem grid. Inputs: matrices of GEOS-Chem corner points and
 % matrices of OMI pixel AKs (with the different AK levels along the first
@@ -188,6 +284,12 @@ function aks = bin_omi_aks(gc_loncorn, gc_latcorn, omi_aks, omi_lon, omi_lat)
 
 E = JLLErrors;
 
+if exist('omi_pres','var')
+    retrieval = 'domino';
+else
+    retrieval = 'omno2';
+end
+    
 if any(size(gc_loncorn) ~= size(gc_latcorn))
     E.sizeMismatch('gc_loncorn','gc_latcorn');
 end
@@ -222,7 +324,15 @@ end
 % Loop over all GEOS-Chem cells and bin the averaging kernels to them.
 gc_nlat = size(gc_loncorn,1)-1;
 gc_nlon = size(gc_loncorn,2)-1;
-aks = nan(size(omi_aks,1), gc_nlat, gc_nlon);
+if strcmpi(retrieval,'omno2')
+    aks = nan(size(omi_aks,1), gc_nlat, gc_nlon);
+elseif strcmpi(retrieval,'domino')
+    aks = cell(gc_nlat, gc_nlon);
+    pres = cell(gc_nlat, gc_nlon);
+    pres_edge = cell(gc_nlat, gc_nlon);
+else
+    E.notimplemented(retrieval)
+end
 for a=1:gc_nlat
     %fprintf('Binning %.1f%% complete\n',a/gc_nlat*100);
     for b=1:gc_nlon
@@ -232,13 +342,30 @@ for a=1:gc_nlat
         y2 = gc_latcorn(a+1,b);
         
         xx = omi_lon >= x1 & omi_lon < x2 & omi_lat >= y1 & omi_lat < y2;
-        % All OMI aks are given at the same pressures, so we can just
-        % average across all kernels that belong to this grid cell.
-        this_ak = nanmean(omi_aks(:,xx),2);
-        aks(:,a,b) = this_ak;
+        
+        if strcmpi(retrieval,'omno2')
+            % All OMI aks are given at the same pressures, so we can just
+            % average across all kernels that belong to this grid cell.
+            this_ak = nanmean(omi_aks(:,xx),2);
+            aks(:,a,b) = this_ak;
+        elseif strcmpi(retrieval,'domino')
+            % DOMINO AKs are NOT at the same pressure level, therefore when
+            % we integrate, what we're going to have to do is apply each
+            % averaging kernel in turn (interpolating the GC profile to
+            % each set of pressure levels) then average the column at the
+            % end.
+            aks{a,b} = omi_aks(:,xx);
+            pres{a,b} = omi_pres(:,xx);
+            pres_edge{a,b} = omi_pres_edge(:,xx);
+        end
     end
 end
 
+varargout{1} = aks;
+if strcmpi(retrieval,'domino')
+    varargout{2} = pres;
+    varargout{3} = pres_edge;
+end
 
 end
 
@@ -312,5 +439,99 @@ end
 
 omi_no2_ndens = (omi_no2 * 1e-9) .* (omi_ndens_air * 1e-6) .* (omi_bxhght * 100) .* binned_aks;
 no2_columns = squeeze(nansum2(omi_no2_ndens,3));
+
+end
+
+function no2_columns = integrate_domino_profile(gc_no2, gc_bxhght, gc_pressure, gc_ndens_air, gc_tp, binned_aks, binned_pres, binned_pres_edge)
+% This will integrate the geos-chem columns weighted by the OMI AKs after
+% interpolating to the OMI pressures.  The integration will be carried out
+% after that in the same manner as integrate_geoschem_profile, that is,
+% the integral will be calculated using the rectangular rule.
+%
+% In order to find the box height in meters, the height of each GC pressure
+% level will be calculated as the cumulative sum of the box height values,
+% which can then be intepolated to the OMI pressure levels, and the box
+% height for level i taken as the difference between level i and i+1
+% altitude in meters. Number density will also be interpolated to the new
+% pressure levels, and the GC tropopause will be used to restrict the
+% column.
+
+
+sz = size(gc_no2);
+if numel(sz) < 4;
+    sz = cat(2, sz, ones(1,4-numel(sz)));
+end
+gc_z = cumsum(gc_bxhght,3);
+no2_columns = nan(sz(1), sz(2), sz(4));
+
+for a=1:sz(1)
+    for b=1:sz(2)
+        for t=1:sz(4) % I think t is extraneous, but I'll leave it here just in case
+            % For DOMINO, since each pixel has a different set of pressure
+            % levels, we will interpolate GC output to the pressure levels
+            % of each pixel, then calculate the VCD for that interpolation,
+            % then average all the VCDs resulting from AKs in the grid cell
+            % together to get the final, AK'ed VCD. This should be
+            % mathematically equivalent (but likely less efficient
+            % computationally) as the method I used for OMNO2 AKs.
+            
+            omi_aks = binned_aks{a,b};
+            if size(omi_aks,2) == 0 || all(isnan(omi_aks(:)))
+                continue
+            end
+            omi_pres = binned_pres{a,b};
+            omi_pres_edge = binned_pres_edge{a,b};
+            
+            nans = all(isnan(omi_aks),1);
+            omi_aks(:,nans) = [];
+            omi_pres(:,nans) = [];
+            omi_pres_edge(:,nans) = [];
+            
+            gc_pvec = cat(1,squeeze(gc_pressure(a,b,:,t)),0.01);
+            gc_zvec = cat(1, 0, squeeze(gc_z(a,b,:,t)));
+            gc_nair_vec = squeeze(gc_ndens_air(a,b,:,t));
+            gc_no2vec = squeeze(gc_no2(a,b,:,t));
+            
+            omi_no2_columns = nan(1,size(omi_aks,2));
+            for p=1:size(omi_aks,2)
+            
+                % For each column, interpolate box altitude to OMI pressures,
+                % height is proportional to ln(p), so use linear interpolation
+                % w.r.t. ln(p):
+                %   z = -ln(p/p0)*H = H*log(p0) - H*log(p)
+                % When GC outputs actual pressure edges the last edge is 0.01
+                % which is not included in the satellite pressure values, we'll
+                % include it to have edges to work with, then also add 0 to the
+                % boxheight values so that we can take the difference.
+                
+                omi_zvec_p = interp1(log(gc_pvec), gc_zvec, log(omi_pres_edge(:,p)),'linear','extrap');
+                omi_bxhght_p = diff(omi_zvec_p);
+                
+                % Also interpolate number density to OMI pressure levels,
+                % number density is directly proportional to p:
+                %   pV = nRT => n/V = p/RT
+                % so we'll directly interpolate.
+                omi_ndens_air_p = interp1(gc_pvec(1:end-1), gc_nair_vec, omi_pres(:,p), 'linear','extrap');
+                
+                % Finally interpolate the GC NO2 mixing ratio values (scaling
+                % to straight mixing ratios, i.e. parts-per-part). I'll do this
+                % in log-log space, which I've seen before. We will NOT
+                % extrapolate this time, because I do not want there to be
+                % values below the surface (so outside of the GC pressure
+                % values, it will have the value of NaN)
+                omi_no2_p = exp(interp1(log(gc_pvec(1:end-1)), log(gc_no2vec), log(omi_pres(:,p))));
+                strat = omi_pres(:,p) < gc_pressure(a,b,floor(gc_tp(a,b,t)),t);
+                omi_no2_p(strat) = nan;
+                
+                % Finally the actual calculation of columns is fairly straightforward: sum
+                % over each box's partial column weighted by AK (after appropriate unit
+                % conversions)
+                omi_no2_columns(p) = nansum2((omi_no2_p * 1e-9) .* (omi_ndens_air_p * 1e-6) .* (omi_bxhght_p * 100) .* omi_aks(:,p));
+            end
+            
+            no2_columns(a,b,t) = nanmean(omi_no2_columns);
+        end
+    end
+end
 
 end
