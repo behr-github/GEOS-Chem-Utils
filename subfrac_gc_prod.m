@@ -1,4 +1,4 @@
-function [ subfrac ] = subfrac_gc_prod( Prod, frac_cat, denom_cats )
+function [ subfrac ] = subfrac_gc_prod( Prod, frac_cat, denom_cats, verbose )
 %SUBFRAC_GC_PROD Calculates a fraction of NO production from GC output
 %   GEOS-Chem v. 9-02b has 8 categories for the production of NO: aircraft,
 %   anthropogenic, biomass burning, biofuels, fertilizer, lightning, soil,
@@ -27,6 +27,9 @@ function [ subfrac ] = subfrac_gc_prod( Prod, frac_cat, denom_cats )
 %   will both produce the same result, as this function will always include
 %   frac_cat in the denominator.
 %
+%   One optional argument: setting the final argument to false will prevent
+%   printing out the category names as a double check.
+%
 %   Josh Laughner <joshlaugh5@gmail.com> 18 Nov 2015
 
 E = JLLErrors;
@@ -47,6 +50,10 @@ if ~isnumeric(denom_cats) || any(denom_cats > numel(Prod))
     E.badinput('denom_cats must contain valid numeric indices for the Prod structure')
 end
 
+if ~exist('verbose','var')
+    verbose = true;
+end
+
 %%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%% MAIN FUNCTION %%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%
@@ -57,6 +64,14 @@ end
 xx = frac_cat == denom_cats;
 if sum(xx) > 0
     denom_cats(xx) = [];
+end
+
+% Print out the category names to double check
+if verbose
+    fprintf('Calculating fraction of %s with the other categories:\n',Prod(frac_cat).fullCat);
+    for a=1:numel(denom_cats)
+        fprintf('\t %s\n',Prod(denom_cats(a)).fullCat);
+    end
 end
 
 % For each category, read it in and sum over the vertical levels.
