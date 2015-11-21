@@ -37,8 +37,12 @@ switch plttype
         varargout{1} = avg_meridional_avg_table(varargin{:});
     case 'grid_mls'
         varargout{1} = grid_mls_data_to_gc(varargin{:});
+    case 'grid_mls_daily'
+        varargout{1} = grid_daily_mls_data_to_gc(varargin{:});
     case 'grid_month_omno2'
         [varargout{1}, varargout{2}] = grid_omno2d_monthly(varargin{:});
+    case 'grid_day_omno2'
+        varargout{1} = grid_omno2d_daily(varargin{:});
     otherwise
         fprintf('Did not recognize plot type\n');
         return
@@ -76,7 +80,7 @@ end
         end
     end
 
-    function [relative, ndens_bool, lonlim, latlim] = parse_varargs(vargs)
+    function [relative, ndens_bool, lonlim, latlim, timelim_bool] = parse_varargs(vargs)
         % Parse varargs. If one is the string 'relative', the next one is
         % the relative boolean. Also look for the string 'ndens', if there,
         % set it to use number density (and remove it). There should be 0
@@ -99,7 +103,14 @@ end
             vargs(xx) = [];
         elseif sum(xx) == 0
             ndens_bool = false;
-        end    
+        end
+        
+        xx = strcmpi('timelim',vargs);
+        if sum(xx) > 0
+            timelim_bool = true;
+        else
+            timelim_bool = false;
+        end
         
         if numel(vargs) == 0
             lonlim = [-200 200];
@@ -114,35 +125,51 @@ end
         end
     end
 
-    function [lonlim, latlim] = define_regions(region)
+    function [lonlim, latlim, timeind] = define_regions(region)
+        % If limiting by time, define the Northern Hemisphere to be
+        % June-Aug and the Southern Hemisphere to be Jan, Feb, Dec.
+        nh_times = modis_date_to_day('2012-06-01'):modis_date_to_day('2012-08-31');
+        nh_mask = false(1,366);
+        nh_mask(nh_times) = true;
+        sh_times = [modis_date_to_day('2012-01-01'):modis_date_to_day('2012-02-29'), modis_date_to_day('2012-12-01'):modis_date_to_day('2012-12-31')];
+        sh_mask = false(1,366);
+        sh_mask(sh_times) = true;
         switch region
             case 'na'
                 lonlim = [-120, -65];
                 latlim = [20, 60];
+                %latlim = [20, 50];
+                timeind = nh_mask;
             case 'sa'
                 lonlim = [-77, -39];
                 latlim = [-35, 10];
+                timeind = sh_mask;
             case 'naf'
                 lonlim = [-15, 48];
                 latlim = [3, 25];
+                timeind = nh_mask;
             case 'saf'
                 lonlim = [10, 48];
                 latlim = [-30, 3];
+                timeind = sh_mask;
             case 'seas'
                 lonlim = [95, 146];
                 latlim = [-9, 26];
+                timeind = nh_mask;
             case 'neur'
                 lonlim = [60, 130];
                 latlim = [30, 68];
+                timeind = nh_mask;
             otherwise
                 lonlim = [-200, 200];
                 latlim = [-100, 100];
+                timeind = true(1,366);
         end
     end
 
     function [xx,yy] = region_xxyy(region)
         [lonlim, latlim] = define_regions(region);
-        [glon, glat] = geos_chem_centers;
+        [glon, glat] = geos_chem_centers('2x25');
         xx = glon >= lonlim(1) & glon <= lonlim(2);
         yy = glat >= latlim(1) & glat <= latlim(2);
     end
@@ -187,42 +214,9 @@ end
         end
     end
 
-    function add_sat_mer_avg_to_fig(fig, specie, region, gridded_data, lnox_crit, noregrid)
-        % Will call sat_meridional_avg to calculate the meridional average
-        % of satellite data for the given region then add that to the
-        % figure given by the handle fig.  The figure should have a legend
-        % already.  If you have pregridded data, pass as the final argument
-        % to save time gridding.  This WILL NOT check that you are adding
-        % a like species to the figure, so it will happily say put NO2
-        % columns on an HNO3 concentration plot or put data from N. Am. on
-        % SE Asia. Just warning you...
-        
-        % Check input
-        if ~ishandle(fig) || ~strcmpi(fig.Type, 'figure')
-            E.badinput('fig must be a handle to a figure')
-        end
-        if ~exist('gridded_data','var')
-            gridded_data = []; % placeholder, sat_meridional_avg will recognize this as indicating gridding must be done.
-        end
-        if ~exist('lnox_crit','var')
-            lnox_crit = [];
-        end
-        if ~exist('noregrid','var')
-            noregrid = 0;
-        end
-        
-        ax = findobj(fig,'Type','axes');
-        leg = findobj(fig,'Type','legend');
-        
-        [sat_lon, sat_avg] = sat_meridional_avg(specie, region, gridded_data, lnox_crit, noregrid);
-        
-        line(sat_lon, sat_avg, 'color', 'k', 'linewidth', 1.5, 'linestyle', '--', 'parent', ax);
-        lstrings = leg.String;
-        lstrings{end+1} = 'Satellite';
-        legend(lstrings{:});
-    end
+    
 
-    function [sat_lon, sat_avg] = sat_meridional_avg(specie, region, gridded_data, lnox_crit, noregrid)
+    function [sat_lon, sat_avg] = sat_meridional_avg(specie, region, gridded_data, lnox_crit, noregrid_bool, timelim_bool)
         % Calculates a meridional average for satellite measurements of
         % NO2 (column), O3, or HNO3. Needs which species (as a string),
         % one of the regions (also a string). Hard coded to do 2012 right
@@ -240,6 +234,8 @@ end
         gloncorn = gloncorn(yy,xx)';
         glatcorn = glatcorn(yy,xx)';
         
+        [lonlim, latlim, timemask] = define_regions(region);
+        
         switch lower(specie)
             case 'no2'
                 if ~exist('gridded_data','var') || isempty(gridded_data)
@@ -247,7 +243,7 @@ end
                     gridded_data = omno2d_timeavg('2012-01-01','2012-12-31');
                 end
                 [omno2d_lon, omno2d_lat] = omno2d_centers;
-                [lonlim, latlim] = define_regions(region);
+                
                 xx_omi = omno2d_lon(:,1) >= lonlim(1) & omno2d_lon(:,1) <= lonlim(2);
                 yy_omi = omno2d_lat(1,:) >= latlim(1) & omno2d_lat(1,:) <= latlim(2);
                 
@@ -255,12 +251,21 @@ end
                     gridded_data(~lnox_crit) = nan;
                 end
                 
+                if timelim_bool
+                    if size(gridded_data,3) == 366
+                        gridded_data(:,:,~timemask) = nan;
+                    else
+                        E.badinput('If you wish to filter by time, the input data must represent 366 days');
+                    end
+                end
+                
                 if size(gridded_data,3)>1
-                    gridded_data = nanmean(gridded_data,3);
+                    %gridded_data = nanmean(gridded_data,3);
+                    gridded_data = nanmedian(gridded_data,3);
                 end
                 
                 if size(gridded_data,1) * size(gridded_data,2) > 144*91
-                    if noregrid
+                    if noregrid_bool
                         gridded_data = gridded_data(xx_omi,yy_omi);
                     else
                         gridded_data = grid_omno2d_to_gc(gridded_data, omno2d_lon, omno2d_lat, gloncorn, glatcorn);
@@ -268,9 +273,8 @@ end
                 else
                     gridded_data = gridded_data(xx_centers, yy_centers);
                 end
-                
-                if noregrid
-                    
+
+                if noregrid_bool
                     sat_lon = omno2d_lon(xx_omi,1);
                 else
                     sat_lon = geos_chem_centers('2x25');
@@ -279,16 +283,70 @@ end
             otherwise
                 if ~exist('gridded_data','var') || isempty(gridded_data)
                     gridded_data = grid_mls_data_to_gc(gloncorn, glatcorn,specie);
+                    if timelim_bool
+                        warning('Time limits not applied; you must pass an existing matrix for that to work')
+                    end
                 else
+                    if exist('lnox_crit','var') && ~isempty(lnox_crit)
+                        gridded_data(~lnox_crit) = nan;
+                    end
+                    
+                    if timelim_bool
+                        if size(gridded_data,3) == 366
+                            gridded_data(:,:,~timemask) = nan;
+                        else
+                            E.badinput('If you wish to filter by time, the input data must represent 366 days');
+                        end
+                    end
+                    
+                    %gridded_data = nanmean(gridded_data,3);
+                    gridded_data = nanmedian(gridded_data,3);
                     gridded_data = gridded_data(xx_centers,yy_centers);
                 end
+                
+                
+                
                 sat_lon = geos_chem_centers('2x25');
                 sat_lon = sat_lon(xx_centers);
         end
         
         % Make the meridional average
-        sat_avg = nanmean(gridded_data,2)';
+        %sat_avg = nanmean(gridded_data,2)';
+        sat_avg = nanmedian(gridded_data,2)';
         
+    end
+
+    function gridded_daily_omno2d = grid_omno2d_daily(gc_loncorn, gc_latcorn)
+        addpath('/Users/Josh/Documents/MATLAB/Non BEHR Satellite/OMI Utils');
+        addpath('/Users/Josh/Documents/MATLAB/Non BEHR Satellite/MLS');
+        omno2d_path = '/Volumes/share-sat/SAT/OMI/OMNO2d';
+        if ~exist(omno2d_path,'dir')
+            E.dir_dne('omno2d_path')
+        end
+        [omno2d_lon, omno2d_lat] = omno2d_centers;
+        
+        fname = sprintf('OMI-Aura_L3-OMNO2d_%04dm%02d%02d_v003*.he5', year(dates(d)), month(dates(d)), day(dates(d)));
+        F = dir(fullfile(omno2d_path, sprintf('%04d',year(dates(d))),fname));
+        if isempty(F) && ~ignore_missing
+            E.filenotfound(fname);
+        elseif numel(F) > 1
+            E.toomanyfiles(fname);
+        end
+        
+        gridded_daily_omno2d = nan([size(gc_loncorn)-1, 366]);
+        
+        for d=1:366
+            sdate = modis_day_to_date(d,2012);
+            
+            hinfo = h5info(fullfile(omno2d_path, sprintf('%04d',year(sdate)), F(1).name));
+            todays_no2 = h5read(hinfo.Filename, h5dsetname(hinfo,1,2,1,1,'ColumnAmountNO2TropCloudScreened'));
+            todays_weight = h5read(hinfo.Filename, h5dsetname(hinfo,1,2,1,1,'Weight'));
+            
+            % Ignore negative values - they are either fill values or unphysical
+            todays_weight(todays_no2<0) = 0;
+            
+            gridded_daily_omno2d(:,:,d) = grid_omno2d_to_gc(todays_no2, omno2d_lon, omno2d_lat, gc_loncorn, gc_latcorn, todays_weight);
+        end
     end
 
     function [gridded_monthly_omno2d, monthly_omno2d] = grid_omno2d_monthly(gc_loncorn, gc_latcorn)
@@ -306,7 +364,7 @@ end
         
     end
 
-    function gridded_omno2d = grid_omno2d_to_gc(omno2d_no2, omno2d_lon, omno2d_lat, gc_loncorn, gc_latcorn)
+    function gridded_omno2d = grid_omno2d_to_gc(omno2d_no2, omno2d_lon, omno2d_lat, gc_loncorn, gc_latcorn, omno2d_weights)
         % Averages OMNO2d data to GEOS-Chem resolution. Needs OMNO2d data,
         % longitude, and latitude (all should be the same size) and the
         % GEOS-Chem corner points to average to.
@@ -314,6 +372,9 @@ end
         % Check input
         if ndims(omno2d_no2) ~= ndims(omno2d_lon) || ndims(omno2d_no2) ~= ndims(omno2d_lat) || any(size(omno2d_no2) ~= size(omno2d_lon)) || any(size(omno2d_no2) ~= size(omno2d_lat))
             E.sizeMismatch('omno2d_lon','omno2d_lat','omno2d_no2')
+        end
+        if ~exist(omno2d_weights)
+            omno2d_weights = ones(size(omno2d_no2));
         end
         
         gridded_omno2d = nan(size(gc_loncorn)-1); % one smaller to switch from # of corners to # of grid cells
@@ -323,10 +384,92 @@ end
             if DEBUG_LEVEL > 1; fprintf('%d ',a); end
             for b=1:size(gridded_omno2d,2)
                 xx = omno2d_lon >= gc_loncorn(a,b) & omno2d_lon < gc_loncorn(a+1,b+1) & omno2d_lat >= gc_latcorn(a,b) & omno2d_lat < gc_latcorn(a+1,b+1);
-                gridded_omno2d(a,b) = nanmean(omno2d_no2(xx));
+                gridded_omno2d(a,b) = nansum(omno2d_no2(xx) .* omno2d_weights(xx)) / nansum(omno2d_weights(xx));
             end
         end
         if DEBUG_LEVEL > 1; fprintf('\n'); end
+    end
+
+    function gridded_mls = grid_daily_mls_data_to_gc(gc_loncorn, gc_latcorn, specie, omi_overpass)
+        % Calculates a running average of MLS data for the given GC
+        % longitude and latitude corners.  Intended to be called from
+        % sat_meridional_avg() or externally to pre-grid data and save
+        % yourself time. (In that case, pass a full gc_loncorn/latcorn
+        % matrix - don't cut it down into regions.)
+        %
+        % One optional argument, set to true to limit to approximately OMI
+        % overpass time (will restrict to 11:00 - 15:00 solar time).
+        
+        if ~exist('omi_overpass','var')
+            omi_overpass = false;
+        end
+        
+        switch lower(specie)
+            case 'o3'
+                filepath = '/Volumes/share-sat/SAT/MLS/O3v4-2/2012';
+                files = dir(fullfile(filepath,'*.he5'));
+                pressure_range = [350 200];
+            case 'hno3'
+                filepath = '/Volumes/share-sat/SAT/MLS/HNO3v4-2/2012';
+                files = dir(fullfile(filepath,'*.he5'));
+                %pressure_range = [250 200];
+                pressure_range = [250 140];
+        end
+        
+
+        gridded_mls = nan([size(gc_loncorn)-1, 366]);
+        count = zeros([size(gc_loncorn)-1, 366]);
+
+        addpath('/Users/Josh/Documents/MATLAB/Non BEHR Satellite/MLS');
+        
+        fnames = {files.name};
+        
+        % Do the gridding and averaging
+        d_ind = 0;
+        for d=datenum('2012-01-01'):datenum('2012-12-31')
+            if DEBUG_LEVEL > 1
+                fprintf('Binning %s\n',datestr(d));
+            end
+            d_ind = d_ind + 1;
+            fileglob = sprintf('MLS-Aura_L2GP-%s_v04-2[0-9]-c01_2012d%03d.he5',upper(specie),modis_date_to_day(d));
+            filename = glob(fnames, fileglob);
+            if isempty(filename)
+                continue
+            end
+            Data = read_mls_data(fullfile(filepath,filename{1}));
+            lon = Data.Longitude;
+            lat = Data.Latitude;
+            solar_time = Data.LocalSolarTime;
+            
+            % Find which levels of the MLS retrieval are in the desired
+            % pressure range
+            pp = Data.Pressure >= min(pressure_range) & Data.Pressure <= max(pressure_range);
+            
+            % Restrict (more or less) to OMI overpass time based on the
+            % local solar time of the measurement. Mainly intended to
+            % remove nighttime rather than completely limit to OMI
+            % overpass.
+            if omi_overpass
+                tt = solar_time >= 11 & solar_time <= 15;
+                Data.(upper(specie))(:,~tt) = nan;
+            end
+            
+            for a = 1:size(gridded_mls,1)
+                for b = 1:size(gridded_mls,2)
+                    % Find the elements from the MLS data that fall in each
+                    % GC grid cell and add them to the running average
+                    xx = lon >= gc_loncorn(a,b) & lon < gc_loncorn(a+1,b+1) & lat >= gc_latcorn(a,b) & lat < gc_latcorn(a+1,b+1);
+                    if sum(xx) < 1
+                        continue
+                    end
+                    c = sum(xx);
+                    data = nansum2(Data.(upper(specie))(pp,xx));
+                    
+                    gridded_mls(a, b, d_ind) = nansum2([gridded_mls(a,b) * count(a,b), data]) / (count(a,b) + c);
+                    count(a, b, d_ind) = count(a,b) + c;
+                end
+            end
+        end
     end
 
     function gridded_mls = grid_mls_data_to_gc(gc_loncorn, gc_latcorn, specie)
@@ -347,9 +490,13 @@ end
                 pressure_range = [250 200];
         end
         
-        gridded_mls = zeros(size(gc_loncorn)-1);
-        count = zeros(size(gc_loncorn)-1);
-        
+        if temporal_avg
+            gridded_mls = nan(size(gc_loncorn)-1);
+            count = zeros(size(gc_loncorn)-1);
+        else
+            gridded_mls = nan([size(gc_loncorn)-1, numel(files)]);
+            count = zeros([size(gc_loncorn)-1, numel(files)]);
+        end
         addpath('/Users/Josh/Documents/MATLAB/Non BEHR Satellite/MLS');
         
         % Do the gridding and averaging
@@ -376,12 +523,18 @@ end
                     c = sum(xx);
                     d = nansum(Data.(upper(specie))(pp,xx));
                     
-                    gridded_mls(a,b) = (gridded_mls(a,b) * count(a,b) + d) / (count(a,b) + c);
-                    count(a,b) = count(a,b) + c;
+                    if temporal_avg
+                        gridded_mls(a,b) = nansum2([gridded_mls(a,b) * count(a,b), d]) / (count(a,b) + c);
+                        count(a,b) = count(a,b) + c;
+                    else
+                        gridded_mls(a,b,f) = nansum2([gridded_mls(a,b) * count(a,b), d]) / (count(a,b) + c);
+                        count(a,b,f) = count(a,b) + c;
+                    end
                 end
             end
         end
     end
+
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -574,6 +727,7 @@ end
         % Parse the optional arguments
         fig = [];
         column_bool = false;
+        timelim_bool = false;
         p_max = [];
         p_mat = [];
         region = '';
@@ -594,10 +748,12 @@ end
                     E.badinput('Multiple regions specified ("%s" and "%s"). Only specify one.', region, varargin{a});
                 end
                 region = varargin{a};
+            elseif ischar(varargin{a}) && strcmpi(varargin{a}, 'timelim')
+                timelim_bool = true;
             end
         end
         
-        [lonlim, latlim] = define_regions(region);
+        [lonlim, latlim, timemask] = define_regions(region);
         
         % Make sure the input structure is correct (has everything needed)
         req_fields = {'dataUnit','fullName'};
@@ -653,6 +809,18 @@ end
             E.badinput('Size of input data and criteria do not match')
         end
         
+        % Set times outside the time range to NaN so they are not included
+        % in the average. Do this only if the 'timelim' argument has been
+        % passed and if "data" is 366 elements long in the third dimension,
+        % as the time limits assume so (i.e. 366 days of 2012).
+        if timelim_bool
+            if size(data,3) == 366
+                data(:,:,~timemask) = nan;
+            else
+                E.badinput('To filter by time, the input matrix must represent 366 days')
+            end
+        end
+        
         % Needed for x ticks and to limit to the region
         [glon, glat] = geos_chem_centers(size(data));
         
@@ -667,7 +835,8 @@ end
         yy = glat >= latlim(1) & glat <= latlim(2);
         data = data(xx,yy,:);
         
-        avg_data = nanmean(nanmean(data,3),2);
+        %avg_data = nanmean(nanmean(data,3),2);
+        avg_data = nanmedian(nanmedian(data,3),2);
         glon = glon(xx);
     end
 
@@ -692,7 +861,9 @@ end
         % to average columns rather than concentrations. Other strings will
         % specify what lon/lat limits to apply: 'na' (north america), 'sa'
         % (south america), 'naf' (north africa), 'saf' (south africa), and
-        % 'seas' (southeast asia).
+        % 'seas' (southeast asia). The string 'timelim' will limit the
+        % region to its three summer months (JJA for N. Hemisphere or DJF
+        % for SH).
         
         [avg_data, glon, region, p_max, column_bool, fig] = meridional_avg(dataStruct, criteria, varargin{:});
         
@@ -728,6 +899,54 @@ end
             title(sprintf('%s Meridonal avg.%s%s', species_name{2}, region_title, level_title));
             set(gca,'fontsize',14);
         end
+    end
+
+    function add_sat_mer_avg_to_fig(fig, specie, region, gridded_data, lnox_crit, varargin)
+        % Will call sat_meridional_avg to calculate the meridional average
+        % of satellite data for the given region then add that to the
+        % figure given by the handle fig.  The figure should have a legend
+        % already.  If you have pregridded data, pass as the final argument
+        % to save time gridding.  This WILL NOT check that you are adding
+        % a like species to the figure, so it will happily say put NO2
+        % columns on an HNO3 concentration plot or put data from N. Am. on
+        % SE Asia. Just warning you...
+        %
+        % Some optional arguments: the string 'noregrid' will keep the data
+        % in its native gridding, and the string 'timelim' will limit the
+        % data for each region to that region's three summer months (JJA or
+        % DJF).
+        
+        % Check & parse input
+        if ~ishandle(fig) || ~strcmpi(fig.Type, 'figure')
+            E.badinput('fig must be a handle to a figure')
+        end
+        if ~exist('gridded_data','var')
+            gridded_data = []; % placeholder, sat_meridional_avg will recognize this as indicating gridding must be done.
+        end
+        if ~exist('lnox_crit','var')
+            lnox_crit = [];
+        end
+        noregrid_bool = false;
+        timelim_bool = false;
+        if numel(varargin) > 0
+            for a = 1:numel(varargin)
+                if ischar(varargin{a}) && strcmpi(varargin{a}, 'noregrid')
+                    noregrid_bool = true;
+                elseif ischar(varargin{a}) && strcmpi(varargin{a}, 'timelim')
+                    timelim_bool = true;
+                end
+            end
+        end
+        
+        ax = findobj(fig,'Type','axes');
+        leg = findobj(fig,'Type','legend');
+        
+        [sat_lon, sat_avg] = sat_meridional_avg(specie, region, gridded_data, lnox_crit, noregrid_bool, timelim_bool);
+        
+        line(sat_lon, sat_avg, 'color', 'k', 'linewidth', 1.5, 'linestyle', '--', 'parent', ax);
+        %lstrings = leg.String;
+        %lstrings{end+1} = 'Satellite';
+        %legend(lstrings{:});
     end
 
     function [ avg_table ] = avg_meridional_avg_table(dataStruct_new, criteria_new, dataStruct_old, criteria_old, varargin)
