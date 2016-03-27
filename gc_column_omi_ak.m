@@ -47,13 +47,26 @@ function [ gc_no2 ] = gc_column_omi_ak( gc_no2, gc_bxhght, gc_pressure, gc_ndens
 %       1285-1291.
 %
 %
+%   There are three variables to be set, either as globals in a runscript or
+%   manually in the code. omi_he5_dir must point to the base directory
+%   for the satellite files.  This directory should contain the files
+%   sorted into year and month subfolders (the months within each year folder).
+%   run_mode determines if the function only tries to bin the AKs, apply them,
+%   or both. It is one of the strings 'bin_aks','apply_aks','both'. Finally
+%   ak_save_dir must point to the directory where the binned aks can be saved
+%   or loaded. It should contain two subfolders, OMNO2 and DOMINO.
+%
 %   This function will apply OMNO2 averaging kernels to GEOS-Chem output.
-%   It requires as input 4 output structures from GEOS-Chem created using
+%   It requires as input 5 output structures from GEOS-Chem created using
 %   read_geos_output or by using read_gc_nd51.py and
-%   convert_py_nd51_structure.m: the NO2 mixing ratios, the matrix of
+%   convert_py_nd51_structure.m: the NO2 mixing ratios, the box heights, the matrix of
 %   pressures, the number density of air, and the tropopause level. It will
 %   assume that you want to apply the averaging kernels to the full time
 %   extent of the NO2 structure.
+%
+%   Alternatively if running in "bin_aks" mode, the first two inputs should
+%   be the start and end dates of the period to bin for.  This allows you to
+%   break the year up into smaller chunks if necessary.
 %
 %   For each day, this function will load all 14 OMI orbits then average
 %   the vectors of averaging kernels to the GEOS-Chem grid boxes.  The
@@ -77,47 +90,102 @@ elseif ~onCluster
     omi_he5_dir = '/Volumes/share-sat/SAT/OMI/DOMINOv2.0';
 end
 
+global run_mode;
+if onCluster && isempty(run_mode)
+    E.runscript_error('run_mode');
+else
+    run_mode = 'both';
+end
+
+global ak_save_dir;
+if onCluster && isempty(ak_save_dir)
+    E.runscript_error('ak_save_dir');
+else
+    ak_save_dir = '/Volumes/share2/USERS/LaughnerJ';
+end
+
+
+allowed_modes = {'bin_aks','apply_aks','both'};
+if ~ismember(run_mode, allowed_modes)
+    E.badinput('run_mode must be one of %s', strjoin(allowed_modes, ', '));
+end
+
 fprintf('OMI dir = %s\n',omi_he5_dir);
 
 [gc_loncorn, gc_latcorn] = geos_chem_corners;
 
-tVec = gc_no2.tVec;
-gc_no2_data = gc_no2.dataBlock;
-gc_bxhght_data = gc_bxhght.dataBlock;
-gc_pressure_data = gc_pressure.dataBlock;
-gc_ndens_air_data = gc_ndens_air.dataBlock;
-gc_tp_data = gc_tp.dataBlock;
+if isstruct(gc_no2)
+    tVec = gc_no2.tVec;
+    gc_no2_data = gc_no2.dataBlock;
+    gc_bxhght_data = gc_bxhght.dataBlock;
+    gc_pressure_data = gc_pressure.dataBlock;
+    gc_ndens_air_data = gc_ndens_air.dataBlock;
+    gc_tp_data = gc_tp.dataBlock;
+elseif strcmpi(run_mode,'bin_aks')
+    tVec = datenum(gc_no2):datenum(gc_bxhght);
+else
+    E.badinput('If not running in bin only mode, then the GEOS-Chem output structures MUST be passed as arguments');
+end
 columns = nan(size(gc_tp_data));
 
 parfor d=1:numel(tVec)
     fprintf('Loading OMI files for %s\n',datestr(tVec(d)));
     earth_ellip = referenceEllipsoid('wgs84','kilometer');
     if strcmpi(retrieval,'omno2')
-        [omi_aks, omi_lon, omi_lat, omi_loncorn, omi_latcorn] = load_omi_files(year(tVec(d)), month(tVec(d)), day(tVec(d)), omi_he5_dir);
-        omi_pixweight = calc_pix_areaweight(omi_loncorn, omi_latcorn);
-        fprintf('Binnind OMI AKs for %s\n',datestr(tVec(d)));
-        binned_aks = bin_omi_aks(gc_loncorn, gc_latcorn, omi_aks, omi_lon, omi_lat, omi_loncorn, omi_latcorn, omi_pixweight, earth_ellip);
+        save_name = sprintf('OMNO2_AK_%04d%02d%02d.mat',year(tVec(d)),month(tVec(d)),day(tVec(d)));
+        if exist(fullfile(ak_save_dir,'OMNO2',save_name),'file')
+            continue
+        end
+        if ismember(run_mode,{'bin_aks','both'})
+            [omi_aks, omi_lon, omi_lat, omi_loncorn, omi_latcorn] = load_omi_files(year(tVec(d)), month(tVec(d)), day(tVec(d)), omi_he5_dir);
+            omi_pixweight = calc_pix_areaweight(omi_loncorn, omi_latcorn);
+            fprintf('Binnind OMI AKs for %s\n',datestr(tVec(d)));
+            binned_aks = bin_omi_aks(gc_loncorn, gc_latcorn, omi_aks, omi_lon, omi_lat, omi_loncorn, omi_latcorn, omi_pixweight, earth_ellip);
+            
+            % binned_aks is output in ak_vec x gc_nlat x gc_nlon, rearrange to
+            % gc_nlon x gc_nlat x ak_vec x time.
+            binned_aks = permute(binned_aks, [3 2 1]);
+
+            saveOmno2(fullfile(ak_save_dir,'OMNO2',save_name),binned_aks);
+        elseif ismember(run_mode,{'apply_aks','both'})
+            if strcmpi(run_mode,'apply_aks')
+                AK = load(fullfile(ak_save_dir,'OMNO2',save_name));
+                binned_aks = AK.binned_aks;
+            end
         
-        % binned_aks is output in ak_vec x gc_nlat x gc_nlon, rearrange to
-        % gc_nlon x gc_nlat x ak_vec x time.
-        binned_aks = permute(binned_aks, [3 2 1]);
-        
-        columns(:,:,d) = integrate_omi_profile(gc_no2_data(:,:,:,d), gc_bxhght_data(:,:,:,d), gc_pressure_data(:,:,:,d), gc_ndens_air_data(:,:,:,d), gc_tp_data(:,:,d), binned_aks);
+            columns(:,:,d) = integrate_omi_profile(gc_no2_data(:,:,:,d), gc_bxhght_data(:,:,:,d), gc_pressure_data(:,:,:,d), gc_ndens_air_data(:,:,:,d), gc_tp_data(:,:,d), binned_aks);
+
     elseif strcmpi(retrieval,'domino')
-        [omi_aks, omi_pres, omi_pres_edge, omi_lon, omi_lat, omi_loncorn, omi_latcorn] = load_domino_files(year(tVec(d)), month(tVec(d)), day(tVec(d)), omi_he5_dir);
-        omi_pixweight = calc_pix_areaweight(omi_loncorn, omi_latcorn);
-        fprintf('Binnind OMI AKs for %s\n',datestr(tVec(d)));
-        [binned_aks, binned_pres, binned_pres_edge, binned_weights] = bin_omi_aks(gc_loncorn, gc_latcorn, omi_aks, omi_lon, omi_lat, omi_loncorn, omi_latcorn, omi_pixweight, earth_ellip, omi_pres, omi_pres_edge);
+        save_name = sprintf('DOMINO_AK_%04d%02d%02d.mat',year(tVec(d)),month(tVec(d)),day(tVec(d)));
+        if exist(fullfile(ak_save_dir,'DOMINO',save_name),'file')
+            continue
+        end
+        if ismember(run_mode, {'bin_aks','both'})
+            [omi_aks, omi_pres, omi_pres_edge, omi_lon, omi_lat, omi_loncorn, omi_latcorn] = load_domino_files(year(tVec(d)), month(tVec(d)), day(tVec(d)), omi_he5_dir);
+            omi_pixweight = calc_pix_areaweight(omi_loncorn, omi_latcorn);
+            fprintf('Binnind OMI AKs for %s\n',datestr(tVec(d)));
+            [binned_aks, binned_pres, binned_pres_edge, binned_weights] = bin_omi_aks(gc_loncorn, gc_latcorn, omi_aks, omi_lon, omi_lat, omi_loncorn, omi_latcorn, omi_pixweight, earth_ellip, omi_pres, omi_pres_edge);
+            
+            % binned_aks and binned_pres are output in gc_nlat x gc_nlon with
+            % the ak vectors in each cell, rearrange so that lon is the first
+            % dimension
+            binned_aks = binned_aks';
+            binned_pres = binned_pres';
+            binned_pres_edge = binned_pres_edge';
+            binned_weights = binned_weights';
+            
+            saveDomino(fullfile(ak_save_dir,'DOMINO', save_name), binned_aks, binned_pres, binned_pres_edge, binned_weights);
         
-        % binned_aks and binned_pres are output in gc_nlat x gc_nlon with
-        % the ak vectors in each cell, rearrange so that lon is the first
-        % dimension
-        binned_aks = binned_aks';
-        binned_pres = binned_pres';
-        binned_pres_edge = binned_pres_edge';
-        binned_weights = binned_weights';
-        
-        columns(:,:,d) = integrate_domino_profile(gc_no2_data(:,:,:,d), gc_bxhght_data(:,:,:,d), gc_pressure_data(:,:,:,d), gc_ndens_air_data(:,:,:,d), gc_tp_data(:,:,d), binned_aks, binned_pres, binned_pres_edge, binned_weights);
+        elseif ismember(run_mode, {'apply_aks','both'})
+            if strcmpi(run_mode, 'apply_aks')
+                AK = load(fullfile(ak_save_dir,'DOMINO',save_name));
+                binned_aks = AK.binned_aks;
+                binned_pres = AK.binned_pres;
+                binned_pres_edge = AK.binned_pres_edge;
+                binned_weights = AK.binned_weights;
+            end
+            columns(:,:,d) = integrate_domino_profile(gc_no2_data(:,:,:,d), gc_bxhght_data(:,:,:,d), gc_pressure_data(:,:,:,d), gc_ndens_air_data(:,:,:,d), gc_tp_data(:,:,d), binned_aks, binned_pres, binned_pres_edge, binned_weights);
+        end
     else
         E.notimplemented(retrieval)
     end
@@ -131,6 +199,14 @@ end
 
 gc_no2.Columns = columns;
 
+end
+
+function saveOmno2(save_path, binned_aks)
+        save(save_path,'binned_aks');
+end
+
+function saveDomino(save_path, binned_aks, binned_pres, binned_pres_edge, binned_weights)
+    save(save_path, 'binned_aks', 'binned_pres', 'binned_pres_edge', 'binned_weights');
 end
 
 function weight = calc_pix_areaweight(loncorn, latcorn)
