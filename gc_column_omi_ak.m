@@ -154,7 +154,7 @@ parfor d=1:numel(tVec)
             end
         
             columns(:,:,d) = integrate_omi_profile(gc_no2_data(:,:,:,d), gc_bxhght_data(:,:,:,d), gc_pressure_data(:,:,:,d), gc_ndens_air_data(:,:,:,d), gc_tp_data(:,:,d), binned_aks);
-
+        end
     elseif strcmpi(retrieval,'domino')
         save_name = sprintf('DOMINO_AK_%04d%02d%02d.mat',year(tVec(d)),month(tVec(d)),day(tVec(d)));
         if exist(fullfile(ak_save_dir,'DOMINO',save_name),'file')
