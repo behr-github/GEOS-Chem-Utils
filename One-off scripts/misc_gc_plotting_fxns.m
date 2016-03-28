@@ -17,6 +17,7 @@ switch plttype
         [varargout{1}] = trop_mask(varargin{1:2});
     case 'region_xxyy'
         [varargout{1}, varargout{2}] = region_xxyy(varargin{1});
+        [~,~,varargout{3}] = define_regions(varargin{1});
     case 'timeser_column'
         plot_dcolumn_percentiles(varargin{:}, 'relative', false);
     case 'timeser_relcol'
@@ -38,11 +39,13 @@ switch plttype
     case 'grid_mls'
         varargout{1} = grid_mls_data_to_gc(varargin{:});
     case 'grid_mls_daily'
-        varargout{1} = grid_daily_mls_data_to_gc(varargin{:});
+        [varargout{1}, varargout{2}] = grid_daily_mls_data_to_gc(varargin{:});
     case 'grid_month_omno2'
         [varargout{1}, varargout{2}] = grid_omno2d_monthly(varargin{:});
     case 'grid_day_omno2'
         varargout{1} = grid_omno2d_daily(varargin{:});
+    case 'comp2sat'
+        [varargout{1}, varargout{2}, varargout{3}, varargout{4}, varargout{5}, varargout{6}] = compare_regions_to_sat(varargin{:});
     otherwise
         fprintf('Did not recognize plot type\n');
         return
@@ -160,6 +163,14 @@ end
                 lonlim = [60, 130];
                 latlim = [30, 68];
                 timeind = nh_mask;
+            case 'nh'
+                lonlim = [-180,180];
+                latlim = [0, 60];
+                timeind = nh_mask;
+            case 'sh'
+                lonlim = [-180, 180];
+                latlim = [-60, 60];
+                timeind = sh_mask;
             otherwise
                 lonlim = [-200, 200];
                 latlim = [-100, 100];
@@ -390,7 +401,7 @@ end
         if DEBUG_LEVEL > 1; fprintf('\n'); end
     end
 
-    function gridded_mls = grid_daily_mls_data_to_gc(gc_loncorn, gc_latcorn, specie, omi_overpass)
+    function [gridded_mls, count] = grid_daily_mls_data_to_gc(gc_loncorn, gc_latcorn, specie, omi_overpass)
         % Calculates a running average of MLS data for the given GC
         % longitude and latitude corners.  Intended to be called from
         % sat_meridional_avg() or externally to pre-grid data and save
@@ -413,7 +424,8 @@ end
                 filepath = '/Volumes/share-sat/SAT/MLS/HNO3v4-2/2012';
                 files = dir(fullfile(filepath,'*.he5'));
                 %pressure_range = [250 200];
-                pressure_range = [250 140];
+                %pressure_range = [250 140];
+                pressure_range = [200 140];
         end
         
 
@@ -733,7 +745,7 @@ end
         region = '';
         tp_mask = [];
         for a=1:numel(varargin)
-            if isnumeric(varargin{a}) && isscalar(varargin{a})
+            if isnumeric(varargin{a}) && (isscalar(varargin{a}) || (isvector(varargin{a}) && numel(varargin{a}) == 2))
                 p_max = varargin{a};
             elseif isstruct(varargin{a}) && ~isempty(regexpi(varargin{a}.fullName, 'PSURF', 'once'))
                 p_mat = varargin{a}.dataBlock;
@@ -780,25 +792,31 @@ end
                 E.badinput('Max pressure must be specified if plotting a concentration')
             elseif isempty(p_mat)
                 E.badinput('A matrix of pressures must be give if plotting concentrations')
-            elseif isempty(tp_mask)
-                E.badinput('A troposphere mask must be given if plotting a concentration')
+            elseif isempty(tp_mask) && isscalar(p_max)
+                E.badinput('A troposphere mask must be given if plotting a concentration and only a max pressure given')
             elseif isstruct(tp_mask) && ~strcmpi(tp_mask.fullName,'Tropopause level')
                 E.badinput('The tropopause mask is a structure but does not seem to refer to the tropopause level')
             end
             
             % Set stratospheric boxes to be NaN
-            if isstruct(tp_mask)
-                tp_mask = trop_mask(size(dataStruct.dataBlock), tp_mask);
+            if isscalar(p_max)
+                if isstruct(tp_mask)
+                    tp_mask = trop_mask(size(dataStruct.dataBlock), tp_mask);
+                end
+                dataStruct.dataBlock(~tp_mask) = nan;
             end
-            dataStruct.dataBlock(~tp_mask) = nan;
-            
+
             % Average the concentrations over the requested levels. Set
             % boxes below the max pressure to be NaN.
             if ndims(dataStruct.dataBlock) ~= ndims(p_mat) || any(size(dataStruct.dataBlock) ~= size(p_mat))
                 E.badinput('Pressure and concentration matrices must be the same size')
             end
             
-            pp = p_mat <= p_max;
+            if isscalar(p_max)
+                pp = p_mat <= p_max;
+            else
+                pp = p_mat <= max(p_max) & p_mat >= min(p_max);
+            end
             dataStruct.dataBlock(~pp) = nan;
             data = squeeze(nanmean(dataStruct.dataBlock,3));
         end
@@ -989,5 +1007,180 @@ end
        avg_table = table(AbsoluteDifference, RelativeDifference, 'RowNames', regions);
     end
 
+    function [omno2_no2, omno2_std, domino_no2, domino_std, omno2_gc, domino_gc] = compare_regions_to_sat(varargin)
+        % Will generate the (hopefully) final figure for Ben and my paper.
+        % The current idea I have is to make two panels, one for OMNO2 one
+        % for DOMINO that compare the average satellite columns for the
+        % four "good" satellite regions (S.Am., S.Af., N.Af., and SE Asia)
+        % to the AK-corrected base, HendwMPN-PNA-N2O5 and HendwMPN-PNA-N2O5
+        % +33% cases. There will need to be two plots I think because the
+        % AKs are different for each product. So each region will have 8
+        % points, four per panel.
+        
+        if ismember('sdom',varargin)
+            sdom = true;
+            fprintf('Using std. dev. of mean\n');
+        else
+            sdom = false;
+            fprintf('Using just std. dev.\n');
+        end
+
+        % Load the production based masks that we'll need to cut down the
+        % GC and satellite matices to the lightning heavy observations. We
+        % will use the lnox > 60% from the base runs for all runs so that
+        % we are comparing the same grid cells in every case.
+        M = load(fullfile('/Users/Josh/Documents/MATLAB/','MPN Project','Workspaces','Pickering Parameterization','Daily24hrs','All2012Daily','HendwMPN_PNA_N2O5-Pickp33-ProdFrac.mat'), 'hendwmpn_pna_n2o5_pickp33_lnoxgt60','anthro_lt15e10');
+        lnox_mask = M.hendwmpn_pna_n2o5_pickp33_lnoxgt60;
+        anthro_mask = M.anthro_lt15e10;
+        
+        % Then load the satellite data and average it down for each
+        % regions.
+        
+        omno2_path = '/Volumes/share2/USERS/LaughnerJ/DOMINO-OMNO2_comparision/OMNO2/2.5x2.0-avg';
+        domino_path = '/Volumes/share2/USERS/LaughnerJ/DOMINO-OMNO2_comparision/DOMINO/2.5x2.0-avg';
+        
+        fprintf('Loading OMNO2 data... Please be patient...   ');
+        F_omno2 = dir(fullfile(omno2_path,'OMI*.mat'));
+        omno2_data = nan(144,91,numel(F_omno2));
+        omno2_weight = nan(144,91,numel(F_omno2));
+        for a=1:numel(F_omno2)
+            O = load(fullfile(omno2_path, F_omno2(a).name));
+            if a == 1
+                omno2_lon = O.GC_avg.Longitude;
+                omno2_lat = O.GC_avg.Latitude;
+            end
+            omno2_data(:,:,a) = O.GC_avg.ColumnAmountNO2Trop;
+            omno2_weight(:,:,a) = O.GC_avg.Weight;
+            clear('O')
+        end
+        fprintf('Done.\n');
+        omno2_mask = ~isnan(omno2_data);
+        omno2_data(~lnox_mask | ~anthro_mask) = nan;
+        
+        fprintf('Loading DOMINO data... Please be patient...   ');
+        F_domino = dir(fullfile(domino_path, 'OMI*.mat'));
+        domino_data = nan(144,91,numel(F_domino));
+        domino_weight = nan(144,91,numel(F_domino));
+        for a=1:numel(F_domino)
+            D = load(fullfile(domino_path, F_domino(a).name));
+            if a == 1
+                domino_lon = D.GC_avg.Longitude;
+                domino_lat = D.GC_avg.Latitude;
+            end
+            domino_data(:,:,a) = D.GC_avg.TroposphericVerticalColumn;
+            domino_weight(:,:,a) = D.GC_avg.Weight;
+            clear('D')
+        end
+        domino_mask = ~isnan(domino_data);
+        domino_data(~lnox_mask | ~anthro_mask) = nan;
+        fprintf('Done.\n');
+        
+        fprintf('Dividing sat data into regions...   ');
+        regions = {'sa','saf','naf','seas'};
+        omno2_no2 = make_empty_struct_from_cell(regions);
+        omno2_std = make_empty_struct_from_cell(regions);
+        domino_no2 = make_empty_struct_from_cell(regions);
+        domino_std = make_empty_struct_from_cell(regions);
+        for r=1:numel(regions)
+            [xx,yy] = region_xxyy(regions{r});
+            [~,~,timeind] = define_regions(regions{r});
+            omno2_no2.(regions{r}) = nanmean(reshape(omno2_data(xx,yy,timeind),1,[]));
+            omno2_std.(regions{r}) = nanstd(reshape(omno2_data(xx, yy, timeind),1,[]));
+            
+            domino_no2.(regions{r}) = nanmean(reshape(domino_data(xx, yy, timeind),1,[]));
+            domino_std.(regions{r}) = nanstd(reshape(domino_data(xx, yy, timeind),1,[]));
+        end
+        fprintf('Done.\n');
+        
+        % Now load each of the 3 cases from GEOS-Chem for each of the
+        % products' AKs and get the same regions.
+        gc_path = '/Users/Josh/Documents/MATLAB/MPN Project/Workspaces/Pickering Parameterization/DailyOMI/AllAKsDaily';
+        chems = {'JPLnoMPN','HendwMPN-PNA-N2O5','HendwMPN-PNA-N2O5'};
+        omno2_ak_files = {'JPLnoMPN-Pickp0-OMI_NO2_aks.mat','HendwMPN_PNA_N2O5-Pickp0-OMI_NO2_OMI_aks.mat','HendwMPN_PNA_N2O5-Pickp33-OMI_NO2_OMI_aks.mat'};
+        dom_ak_files = {'JPLnoMPN-Pickp0-OMI_NO2_DOMINO_aks.mat','HendwMPN-PNA-N2O5-Pickp0-OMI_NO2_DOMINO_aks.mat','HendwMPN-PNA-N2O5-Pickp33-OMI_NO2_DOMINO_aks.mat'};
+        fields = {'Base','Final','Final33'};
+        gc_data = make_empty_struct_from_cell(fields);
+        omno2_gc = make_empty_struct_from_cell(regions,gc_data);
+        domino_gc = make_empty_struct_from_cell(regions,gc_data);
+        for a=1:numel(omno2_ak_files)
+            fprintf('Loading %s...   ', omno2_ak_files{a});
+            O = load(fullfile(gc_path, chems{a}, omno2_ak_files{a}));
+            fns = fieldnames(O);
+            if numel(fns) > 1; warning('Multiple variables in %s, reading %s only',omno2_ak_files{a},fns{1}); end
+            gc = O.(fns{1}).Columns;
+            gc(~lnox_mask | ~anthro_mask | ~omno2_mask) = nan;
+            for r=1:numel(regions)
+                [xx,yy] = region_xxyy(regions{r});
+                [~,~,timeind] = define_regions(regions{r});
+                omno2_gc.(regions{r}).(fields{a}).mean = nanmean(reshape(gc(xx,yy,timeind),1,[]));
+                omno2_gc.(regions{r}).(fields{a}).std = nanstd(reshape(gc(xx,yy,timeind),1,[]));
+            end
+            fprintf('Done.\n');
+            clear('O','gc')
+            
+            fprintf('Loading %s...   ', dom_ak_files{a});
+            D = load(fullfile(gc_path, chems{a}, dom_ak_files{a}));
+            fns = fieldnames(D);
+            if numel(fns) > 1; warning('Multiple variables in %s, reading %s only',dom_ak_files{a},fns{1}); end
+            gc = D.(fns{1}).Columns;
+            gc(~lnox_mask | ~anthro_mask | ~domino_mask) = nan;
+            for r=1:numel(regions)
+                [xx,yy] = region_xxyy(regions{r});
+                [~,~,timeind] = define_regions(regions{r});
+                domino_gc.(regions{r}).(fields{a}).mean = nanmean(reshape(gc(xx,yy,timeind),1,[]));
+                domino_gc.(regions{r}).(fields{a}).std = nanstd(reshape(gc(xx,yy,timeind),1,[]));
+            end
+            fprintf('Done.\n')
+            clear('D','gc')
+        end
+        
+        if sdom
+            sqrtn_o = sqrt(sum(lnox_mask(:) & anthro_mask(:) & omno2_mask(:)));
+            sqrtn_d = sqrt(sum(lnox_mask(:) & anthro_mask(:) & domino_mask(:)));
+        else
+            sqrtn_o = 1;
+            sqrtn_d = 1;
+        end
+
+        % Finally make the figures. Two panels: OMNO2 on top, DOMINO on
+        % bottom.
+        
+        figure; 
+        subplot(2,1,1)
+        
+        cols = {'r','b',[0 0.5 0]};
+        marks = {'x','^','s'};
+        
+        for r=1:numel(regions)
+            x = (r-1)*2+1;
+            l(1) = line(x-0.5,omno2_no2.(regions{r}),'color','k','marker','o','linewidth',2);
+            scatter_errorbars(x-0.5, omno2_no2.(regions{r}), omno2_std.(regions{r})/sqrtn_o, 'color','k','linewidth',2);
+            for a=1:numel(fields)
+                dx = a*0.25 - 0.5;
+                l(a+1) = line(x+dx, omno2_gc.(regions{r}).(fields{a}).mean, 'color', cols{a}, 'marker', marks{a}, 'linewidth', 2);
+                scatter_errorbars(x+dx, omno2_gc.(regions{r}).(fields{a}).mean, omno2_gc.(regions{r}).(fields{a}).std/sqrtn_o, 'color', cols{a}, 'linewidth',2);
+            end
+        end
+        set(gca,'xtick',[1 3 5 7]);
+        set(gca,'xticklabels',{'S. Am.','S. Af.','N. Af.', 'SE Asia'});
+        set(gca,'fontsize',16);
+        legend(l',{'OMNO2','Base case','Final case','Final case +33%'});
+        
+        subplot(2,1,2);
+        for r=1:numel(regions)
+            x = (r-1)*2+1;
+            l(1) = line(x-0.5,domino_no2.(regions{r}),'color','k','marker','o','linewidth',2);
+            scatter_errorbars(x-0.5, domino_no2.(regions{r}), domino_std.(regions{r})/sqrtn_d, 'color','k','linewidth',2);
+            for a=1:numel(fields)
+                dx = a*0.25 - 0.5;
+                l(a+1) = line(x+dx, domino_gc.(regions{r}).(fields{a}).mean, 'color', cols{a}, 'marker', marks{a}, 'linewidth', 2);
+                scatter_errorbars(x+dx, domino_gc.(regions{r}).(fields{a}).mean, domino_gc.(regions{r}).(fields{a}).std/sqrtn_d, 'color', cols{a}, 'linewidth',2);
+            end
+        end
+        set(gca,'xtick',[1 3 5 7]);
+        set(gca,'xticklabels',{'S. Am.','S. Af.','N. Af.', 'SE Asia'});
+        set(gca,'fontsize',16);
+        legend(l',{'DOMINO','Base case','Final case','Final case +33%'});
+    end
 end
 
