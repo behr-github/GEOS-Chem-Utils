@@ -89,7 +89,7 @@ gc_ndens_air_data = gc_ndens_air.dataBlock;
 gc_tp_data = gc_tp.dataBlock;
 columns = nan(size(gc_tp_data));
 
-for d=1:numel(tVec)
+parfor d=1:numel(tVec)
     fprintf('Loading OMI files for %s\n',datestr(tVec(d)));
     if strcmpi(retrieval,'omno2')
         [omi_aks, omi_lon, omi_lat] = load_omi_files(year(tVec(d)), month(tVec(d)), day(tVec(d)), omi_he5_dir);
