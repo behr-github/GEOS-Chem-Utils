@@ -1,9 +1,7 @@
 function gridded_daily_omno2d = grid_omno2d_to_gc_daily(gc_loncorn, gc_latcorn)
 E = JLLErrors;
 
-addpath('/Users/Josh/Documents/MATLAB/Non BEHR Satellite/OMI Utils');
-addpath('/Users/Josh/Documents/MATLAB/Non BEHR Satellite/MLS');
-omno2d_path = '/Volumes/share-sat/SAT/OMI/OMNO2d';
+omno2d_path = '/global/home/users/laughner/myscratch/SAT/OMI/OMNO2d';
 if ~exist(omno2d_path,'dir')
     E.dir_dne('omno2d_path')
 end
@@ -19,10 +17,10 @@ parfor d=1:366
     
     fname = sprintf('OMI-Aura_L3-OMNO2d_%04dm%02d%02d_v003*.he5', year(sdate), month(sdate), day(sdate));
     F = dir(fullfile(omno2d_path, sprintf('%04d',year(sdate)),fname));
-    if isempty(F) && ~ignore_missing
-        E.filenotfound(fname);
+    if isempty(F)
+        error('gridded_omno2d:file_not_found','The file %s cannot be found',fname);
     elseif numel(F) > 1
-        E.toomanyfiles(fname);
+        error('gridded_omno2d:too_many_files','The filespec %s returns multiple options',fname);
     end
     
     hinfo = h5info(fullfile(omno2d_path, sprintf('%04d',year(sdate)), F(1).name));
