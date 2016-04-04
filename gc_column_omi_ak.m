@@ -47,13 +47,26 @@ function [ gc_no2 ] = gc_column_omi_ak( gc_no2, gc_bxhght, gc_pressure, gc_ndens
 %       1285-1291.
 %
 %
+%   There are three variables to be set, either as globals in a runscript or
+%   manually in the code. omi_he5_dir must point to the base directory
+%   for the satellite files.  This directory should contain the files
+%   sorted into year and month subfolders (the months within each year folder).
+%   run_mode determines if the function only tries to bin the AKs, apply them,
+%   or both. It is one of the strings 'bin_aks','apply_aks','both'. Finally
+%   ak_save_dir must point to the directory where the binned aks can be saved
+%   or loaded. It should contain two subfolders, OMNO2 and DOMINO.
+%
 %   This function will apply OMNO2 averaging kernels to GEOS-Chem output.
-%   It requires as input 4 output structures from GEOS-Chem created using
+%   It requires as input 5 output structures from GEOS-Chem created using
 %   read_geos_output or by using read_gc_nd51.py and
-%   convert_py_nd51_structure.m: the NO2 mixing ratios, the matrix of
+%   convert_py_nd51_structure.m: the NO2 mixing ratios, the box heights, the matrix of
 %   pressures, the number density of air, and the tropopause level. It will
 %   assume that you want to apply the averaging kernels to the full time
 %   extent of the NO2 structure.
+%
+%   Alternatively if running in "bin_aks" mode, the first two inputs should
+%   be the start and end dates of the period to bin for.  This allows you to
+%   break the year up into smaller chunks if necessary.
 %
 %   For each day, this function will load all 14 OMI orbits then average
 %   the vectors of averaging kernels to the GEOS-Chem grid boxes.  The
@@ -61,6 +74,8 @@ function [ gc_no2 ] = gc_column_omi_ak( gc_no2, gc_bxhght, gc_pressure, gc_ndens
 %
 %   Dependencies:
 %       Classes/JLLErrors.m
+
+E=JLLErrors;
 
 % Get run directories
 global onCluster
@@ -77,43 +92,121 @@ elseif ~onCluster
     omi_he5_dir = '/Volumes/share-sat/SAT/OMI/DOMINOv2.0';
 end
 
+global run_mode;
+if onCluster && isempty(run_mode)
+    E.runscript_error('run_mode');
+elseif ~onCluster;
+    run_mode = 'both';
+    fprintf('Setting run_mode to %s\n',run_mode);
+end
+
+global ak_save_dir;
+if onCluster && isempty(ak_save_dir)
+    E.runscript_error('ak_save_dir');
+elseif ~onCluster
+    ak_save_dir = '/Volumes/share2/USERS/LaughnerJ';
+    fprintf('Setting ak_save_dir to %s\n',ak_save_dir);
+end
+
+global overwrite
+if onCluster && isempty(overwrite)
+    E.runscript_error('overwrite')
+elseif ~onCluster
+    overwrite = true;
+end
+
+allowed_modes = {'bin_aks','apply_aks','both'};
+if ~ismember(run_mode, allowed_modes)
+    E.badinput('run_mode must be one of %s', strjoin(allowed_modes, ', '));
+end
+
 fprintf('OMI dir = %s\n',omi_he5_dir);
+fprintf('Run mode = %s\n',run_mode);
+fprintf('AK save dir = %s\n',ak_save_dir);
 
 [gc_loncorn, gc_latcorn] = geos_chem_corners;
 
-tVec = gc_no2.tVec;
-gc_no2_data = gc_no2.dataBlock;
-gc_bxhght_data = gc_bxhght.dataBlock;
-gc_pressure_data = gc_pressure.dataBlock;
-gc_ndens_air_data = gc_ndens_air.dataBlock;
-gc_tp_data = gc_tp.dataBlock;
-columns = nan(size(gc_tp_data));
+if isstruct(gc_no2)
+    tVec = gc_no2.tVec;
+    gc_no2_data = gc_no2.dataBlock;
+    gc_bxhght_data = gc_bxhght.dataBlock;
+    gc_pressure_data = gc_pressure.dataBlock;
+    gc_ndens_air_data = gc_ndens_air.dataBlock;
+    gc_tp_data = gc_tp.dataBlock;
+    columns = nan(size(gc_tp_data));
+elseif strcmpi(run_mode,'bin_aks')
+    tVec = datenum(gc_no2):datenum(gc_bxhght);
+    % parfor needs these to be slicable in the proper dimensions.
+    gc_no2_data = nan(1,1,1,numel(tVec));
+    gc_bxhght_data = nan(1,1,1,numel(tVec));
+    gc_pressure_data = nan(1,1,1,numel(tVec));
+    gc_ndens_air_data = nan(1,1,1,numel(tVec));
+    gc_tp_data = nan(1,1,numel(tVec));
+    columns = nan(144, 91, numel(tVec));
+else
+    E.badinput('If not running in bin only mode, then the GEOS-Chem output structures MUST be passed as arguments');
+end
 
 parfor d=1:numel(tVec)
     fprintf('Loading OMI files for %s\n',datestr(tVec(d)));
+    earth_ellip = referenceEllipsoid('wgs84','kilometer');
     if strcmpi(retrieval,'omno2')
-        [omi_aks, omi_lon, omi_lat] = load_omi_files(year(tVec(d)), month(tVec(d)), day(tVec(d)), omi_he5_dir);
-        fprintf('Binnind OMI AKs for %s\n',datestr(tVec(d)));
-        binned_aks = bin_omi_aks(gc_loncorn, gc_latcorn, omi_aks, omi_lon, omi_lat);
+        save_name = sprintf('OMNO2_AK_%04d%02d%02d.mat',year(tVec(d)),month(tVec(d)),day(tVec(d)));
+        if strcmpi(run_mode,'bin_aks') && exist(fullfile(ak_save_dir,'OMNO2',save_name),'file') && ~overwrite
+            fprintf('File %s exists, skipping\n',save_name);
+            continue
+        end
+        if ismember(run_mode,{'bin_aks','both'})
+            [omi_aks, omi_lon, omi_lat, omi_loncorn, omi_latcorn] = load_omi_files(year(tVec(d)), month(tVec(d)), day(tVec(d)), omi_he5_dir);
+            omi_pixweight = calc_pix_areaweight(omi_loncorn, omi_latcorn);
+            fprintf('Binnind OMI AKs for %s\n',datestr(tVec(d)));
+            binned_aks = bin_omi_aks(gc_loncorn, gc_latcorn, omi_aks, omi_lon, omi_lat, omi_loncorn, omi_latcorn, omi_pixweight, earth_ellip);
+            
+            % binned_aks is output in ak_vec x gc_nlat x gc_nlon, rearrange to
+            % gc_nlon x gc_nlat x ak_vec x time.
+            binned_aks = permute(binned_aks, [3 2 1]);
+
+            saveOmno2(fullfile(ak_save_dir,'OMNO2',save_name),binned_aks);
+        elseif ismember(run_mode,{'apply_aks','both'})
+            if strcmpi(run_mode,'apply_aks')
+                AK = load(fullfile(ak_save_dir,'OMNO2',save_name));
+                binned_aks = AK.binned_aks;
+            end
         
-        % binned_aks is output in ak_vec x gc_nlat x gc_nlon, rearrange to
-        % gc_nlon x gc_nlat x ak_vec x time.
-        binned_aks = permute(binned_aks, [3 2 1]);
-        
-        columns(:,:,d) = integrate_omi_profile(gc_no2_data(:,:,:,d), gc_bxhght_data(:,:,:,d), gc_pressure_data(:,:,:,d), gc_ndens_air_data(:,:,:,d), gc_tp_data(:,:,d), binned_aks);
+            columns(:,:,d) = integrate_omi_profile(gc_no2_data(:,:,:,d), gc_bxhght_data(:,:,:,d), gc_pressure_data(:,:,:,d), gc_ndens_air_data(:,:,:,d), gc_tp_data(:,:,d), binned_aks);
+        end
     elseif strcmpi(retrieval,'domino')
-        [omi_aks, omi_pres, omi_pres_edge, omi_lon, omi_lat] = load_domino_files(year(tVec(d)), month(tVec(d)), day(tVec(d)), omi_he5_dir);
-        fprintf('Binnind OMI AKs for %s\n',datestr(tVec(d)));
-        [binned_aks, binned_pres, binned_pres_edge] = bin_omi_aks(gc_loncorn, gc_latcorn, omi_aks, omi_lon, omi_lat, omi_pres, omi_pres_edge);
+        save_name = sprintf('DOMINO_AK_%04d%02d%02d.mat',year(tVec(d)),month(tVec(d)),day(tVec(d)));
+        if strcmpi(run_mode,'bin_aks') && exist(fullfile(ak_save_dir,'DOMINO',save_name),'file') && ~overwrite
+            fprintf('File %s exists, skipping\n',save_name);
+            continue
+        end
+        if ismember(run_mode, {'bin_aks','both'})
+            [omi_aks, omi_pres, omi_pres_edge, omi_lon, omi_lat, omi_loncorn, omi_latcorn] = load_domino_files(year(tVec(d)), month(tVec(d)), day(tVec(d)), omi_he5_dir);
+            omi_pixweight = calc_pix_areaweight(omi_loncorn, omi_latcorn);
+            fprintf('Binnind OMI AKs for %s\n',datestr(tVec(d)));
+            [binned_aks, binned_pres, binned_pres_edge, binned_weights] = bin_omi_aks(gc_loncorn, gc_latcorn, omi_aks, omi_lon, omi_lat, omi_loncorn, omi_latcorn, omi_pixweight, earth_ellip, omi_pres, omi_pres_edge);
+            
+            % binned_aks and binned_pres are output in gc_nlat x gc_nlon with
+            % the ak vectors in each cell, rearrange so that lon is the first
+            % dimension
+            binned_aks = binned_aks';
+            binned_pres = binned_pres';
+            binned_pres_edge = binned_pres_edge';
+            binned_weights = binned_weights';
+            
+            saveDomino(fullfile(ak_save_dir,'DOMINO', save_name), binned_aks, binned_pres, binned_pres_edge, binned_weights);
         
-        % binned_aks and binned_pres are output in gc_nlat x gc_nlon with
-        % the ak vectors in each cell, rearrange so that lon is the first
-        % dimension
-        binned_aks = binned_aks';
-        binned_pres = binned_pres';
-        binned_pres_edge = binned_pres_edge';
-        
-        columns(:,:,d) = integrate_domino_profile(gc_no2_data(:,:,:,d), gc_bxhght_data(:,:,:,d), gc_pressure_data(:,:,:,d), gc_ndens_air_data(:,:,:,d), gc_tp_data(:,:,d), binned_aks, binned_pres, binned_pres_edge);
+        elseif ismember(run_mode, {'apply_aks','both'})
+            if strcmpi(run_mode, 'apply_aks')
+                AK = load(fullfile(ak_save_dir,'DOMINO',save_name));
+                binned_aks = AK.binned_aks;
+                binned_pres = AK.binned_pres;
+                binned_pres_edge = AK.binned_pres_edge;
+                binned_weights = AK.binned_weights;
+            end
+            columns(:,:,d) = integrate_domino_profile(gc_no2_data(:,:,:,d), gc_bxhght_data(:,:,:,d), gc_pressure_data(:,:,:,d), gc_ndens_air_data(:,:,:,d), gc_tp_data(:,:,d), binned_aks, binned_pres, binned_pres_edge, binned_weights);
+        end
     else
         E.notimplemented(retrieval)
     end
@@ -125,11 +218,44 @@ parfor d=1:numel(tVec)
     
 end
 
-gc_no2.Columns = columns;
+if ~strcmpi(run_mode,'bin_aks')
+    gc_no2.Columns = columns;
+end
 
 end
 
-function [omi_aks, omi_lon, omi_lat] = load_omi_files(yr, mn, dy, omi_he5_dir)
+function saveOmno2(save_path, binned_aks)
+        save(save_path,'binned_aks');
+end
+
+function saveDomino(save_path, binned_aks, binned_pres, binned_pres_edge, binned_weights)
+    save(save_path, 'binned_aks', 'binned_pres', 'binned_pres_edge', 'binned_weights');
+end
+
+function weight = calc_pix_areaweight(loncorn, latcorn)
+Lon1 = squeeze(loncorn(1,:,:));
+Lon2 = squeeze(loncorn(2,:,:));
+Lon3 = squeeze(loncorn(3,:,:));
+Lon4 = squeeze(loncorn(4,:,:));
+
+Lat1 = squeeze(latcorn(1,:,:));
+Lat2 = squeeze(latcorn(2,:,:));
+Lat3 = squeeze(latcorn(3,:,:));
+Lat4 = squeeze(latcorn(4,:,:));
+
+weight = nan(size(Lon1));
+
+Amin = 312; % 13 km x 24 km
+Amax = 7500; % approximate max seen from BEHR
+for x=1:size(Lon1,1)
+    for y=1:size(Lon1,2)
+        pixelarea = (m_lldist([Lon1(x,y)-180 Lon2(x,y)-180],[Lat1(x,y) Lat2(x,y)]))*(m_lldist([Lon1(x,y)-180, Lon4(x,y)-180],[Lat1(x,y), Lat4(x,y)]));
+        weight(x,y) = 1 - (pixelarea - Amin)/Amax;
+    end 
+end
+end
+
+function [omi_aks, omi_lon, omi_lat, omi_loncorn, omi_latcorn] = load_omi_files(yr, mn, dy, omi_he5_dir)
 E = JLLErrors;
 
 full_path = fullfile(omi_he5_dir,sprintf('%04d',yr),sprintf('%02d',mn));
@@ -149,6 +275,8 @@ end
 omi_aks = [];
 omi_lon = [];
 omi_lat = [];
+omi_loncorn = [];
+omi_latcorn = [];
 
 for a=1:numel(F)
     %fprintf('Loading file %d of %d\n',a,numel(F));
@@ -193,13 +321,20 @@ for a=1:numel(F)
     
     this_lon = h5read(hi.Filename, h5dsetname(hi,1,2,1,2,'Longitude'));
     this_lat = h5read(hi.Filename, h5dsetname(hi,1,2,1,2,'Latitude'));
+    this_loncorn = h5read(hi.Filename, h5dsetname(hi,1,2,1,2,'FoV75CornerLongitude'));
+    this_latcorn = h5read(hi.Filename, h5dsetname(hi,1,2,1,2,'FoV75CornerLatitude'));
     omi_lon = cat(2, omi_lon, this_lon);
     omi_lat = cat(2, omi_lat, this_lat);
+    omi_loncorn = cat(3, omi_loncorn, this_loncorn);
+    omi_latcorn = cat(3, omi_latcorn, this_latcorn);
+    for p=1:numel(omi_lat)
+        [omi_loncorn(:,p), omi_latcorn(:,p)] = uncross_corners(omi_loncorn(:,p), omi_latcorn(:,p));
+    end
 end
 
 end
 
-function [omi_aks, omi_pres, omi_pres_edge, omi_lon, omi_lat] = load_domino_files(yr, mn, dy, omi_he5_dir)
+function [omi_aks, omi_pres, omi_pres_edge, omi_lon, omi_lat, omi_loncorn, omi_latcorn] = load_domino_files(yr, mn, dy, omi_he5_dir)
 E = JLLErrors;
 
 full_path = fullfile(omi_he5_dir,sprintf('%04d',yr),sprintf('%02d',mn));
@@ -221,6 +356,8 @@ omi_pres = [];
 omi_pres_edge = [];
 omi_lon = [];
 omi_lat = [];
+omi_loncorn = [];
+omi_latcorn = [];
 
 for a=1:numel(F)
     % Load in data and remove fill values
@@ -233,8 +370,7 @@ for a=1:numel(F)
     omi.TM4PresB(omi.TM4PresB<-1e30) = nan;
     omi.TM4SurfP = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,1,'TM4SurfacePressure')));
     omi.TM4SurfP(omi.TM4SurfP<-1e30) = nan;
-
-    % Rearrange so that the vertical coordinate is first
+    % Rearrange so that the vertical or corner coordinate is first
     omi.aks = permute(omi.aks, [3 1 2]);
     
     % Calculate the pressure levels for each pixel. We'll also need the
@@ -269,13 +405,22 @@ for a=1:numel(F)
     
     this_lon = h5read(hi.Filename, h5dsetname(hi,1,2,1,2,'Longitude'));
     this_lat = h5read(hi.Filename, h5dsetname(hi,1,2,1,2,'Latitude'));
+    this_loncorn = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,2,'LongitudeCornerpoints')));
+    this_latcorn = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,2,'LatitudeCornerpoints')));
+    this_loncorn = permute(this_loncorn, [3 1 2]); 
+    this_latcorn = permute(this_latcorn, [3 1 2]);
     omi_lon = cat(2, omi_lon, this_lon);
     omi_lat = cat(2, omi_lat, this_lat);
+    omi_loncorn = cat(3, omi_loncorn, this_loncorn);
+    omi_latcorn = cat(3, omi_latcorn, this_latcorn);
+    for p=1:numel(omi_lat)
+        [omi_loncorn(:,p), omi_latcorn(:,p)] = uncross_corners(omi_loncorn(:,p), omi_latcorn(:,p));
+    end
 end
 
 end
 
-function varargout = bin_omi_aks(gc_loncorn, gc_latcorn, omi_aks, omi_lon, omi_lat, omi_pres, omi_pres_edge)
+function varargout = bin_omi_aks(gc_loncorn, gc_latcorn, omi_aks, omi_lon, omi_lat, omi_loncorn, omi_latcorn, omi_aw, earth_ellip, omi_pres, omi_pres_edge)
 % This subfunction will handle the binning of OMNO2 averaging kernels to
 % the GEOS-Chem grid. Inputs: matrices of GEOS-Chem corner points and
 % matrices of OMI pixel AKs (with the different AK levels along the first
@@ -283,6 +428,12 @@ function varargout = bin_omi_aks(gc_loncorn, gc_latcorn, omi_aks, omi_lon, omi_l
 % be matrices that are (m+1)-by-(n+1) if there are m-by-n GC grid cells.
 
 E = JLLErrors;
+t = getCurrentTask();
+if isempty(t)
+    t.ID = 0;
+end
+
+fprintf('Checking input to bin_omi_aks\n');
 
 if exist('omi_pres','var')
     retrieval = 'domino';
@@ -322,6 +473,7 @@ if any(sz_aks(2:3)~=sz_omilon) || any(sz_aks(2:3)~=sz_omilat)
 end
 
 % Loop over all GEOS-Chem cells and bin the averaging kernels to them.
+fprintf('Looping over all GEOS-Chem cells\n');
 gc_nlat = size(gc_loncorn,1)-1;
 gc_nlon = size(gc_loncorn,2)-1;
 if strcmpi(retrieval,'omno2')
@@ -330,11 +482,12 @@ elseif strcmpi(retrieval,'domino')
     aks = cell(gc_nlat, gc_nlon);
     pres = cell(gc_nlat, gc_nlon);
     pres_edge = cell(gc_nlat, gc_nlon);
+    weights = cell(gc_nlat, gc_nlon);
 else
     E.notimplemented(retrieval)
 end
 for a=1:gc_nlat
-    %fprintf('Binning %.1f%% complete\n',a/gc_nlat*100);
+    fprintf('Binning %.1f%% complete\n',a/gc_nlat*100);
     for b=1:gc_nlon
         x1 = gc_loncorn(a,b);
         x2 = gc_loncorn(a,b+1);
@@ -346,17 +499,36 @@ for a=1:gc_nlat
         if strcmpi(retrieval,'omno2')
             % All OMI aks are given at the same pressures, so we can just
             % average across all kernels that belong to this grid cell.
-            this_ak = nanmean(omi_aks(:,xx),2);
-            aks(:,a,b) = this_ak;
+            if sum(xx(:)) > 0
+                this_ak = omi_aks(:,xx);
+                this_aw = omi_aw(xx);
+                this_loncorn = omi_loncorn(:,xx);
+                this_latcorn = omi_latcorn(:,xx);
+                Q = calc_overlap_weight([x1 x2], [y1 y2], this_loncorn, this_latcorn, earth_ellip);
+                W = repmat(Q .* this_aw', size(this_ak,1), 1);
+                W(:,all(isnan(this_ak),1)) = nan;
+                this_ak_mean = nansum2(this_ak .* W, 2) ./ nansum2(W(1,:),2);
+                aks(:,a,b) = this_ak_mean;
+            else
+                aks(:,a,b) = nan(size(omi_aks,1),1);
+            end
         elseif strcmpi(retrieval,'domino')
             % DOMINO AKs are NOT at the same pressure level, therefore when
             % we integrate, what we're going to have to do is apply each
             % averaging kernel in turn (interpolating the GC profile to
             % each set of pressure levels) then average the column at the
             % end.
+            if sum(xx(:)) < 1; continue; end
             aks{a,b} = omi_aks(:,xx);
             pres{a,b} = omi_pres(:,xx);
             pres_edge{a,b} = omi_pres_edge(:,xx);
+            
+            this_loncorn = omi_loncorn(:,xx);
+            this_latcorn = omi_latcorn(:,xx);
+            Q = calc_overlap_weight([x1 x2], [y1 y2], this_loncorn, this_latcorn, earth_ellip);
+            W = Q .* omi_aw(xx)';
+            %fprintf('W%d: (%d, %d): Size(Q) = %s, size(W) = %s, size(omi_aw(xx))'' = %s, size(aks{a,b}) = %s\n', t.ID, a, b, mat2str(size(Q)), mat2str(size(W)), mat2str(size(omi_aw(xx)')), mat2str(size(aks{a,b})));
+            weights{a,b} = W;
         end
     end
 end
@@ -365,8 +537,83 @@ varargout{1} = aks;
 if strcmpi(retrieval,'domino')
     varargout{2} = pres;
     varargout{3} = pres_edge;
+    varargout{4} = weights;
 end
 
+end
+
+function Q = calc_overlap_weight(gc_lon, gc_lat, pixloncorn, pixlatcorn, earth_ellip)
+% get the grid cell corners
+t = getCurrentTask;
+%t.ID = 0;
+Q = zeros(1,size(pixloncorn,2));
+gc_xall = [gc_lon(1), gc_lon(1), gc_lon(2), gc_lon(2), gc_lon(1)];
+gc_yall = [gc_lat(1), gc_lat(2), gc_lat(2), gc_lat(1), gc_lat(1)];
+% ensure both are clockwise
+[gc_xall, gc_yall] = poly2cw(gc_xall, gc_yall);
+gc_area = areaint(gc_yall, gc_xall, earth_ellip);
+for a=1:size(pixloncorn,2)
+    if any(isnan(pixloncorn(:,a))) || any(isnan(pixlatcorn(:,a))) || any(pixloncorn(:,a) < -180) || any(pixloncorn(:,a) > 180) || any(pixlatcorn(:,a) < -90) || any(pixlatcorn(:,a) > 90) || (any(sign(pixloncorn(:,a))~=sign(pixloncorn(1,a))) && (any(abs(pixloncorn(:,a))>90) || any(abs(pixlatcorn(:,a))>80)))
+        % the last test handles issues where a pixel straddles the international
+        % date line. there's better ways to handle it (wrap the pixel corner around
+        % to be the same sign as the GC corners) but I don't feel like doing that atm.
+        continue;
+    end
+    pixloncorn_a = pixloncorn(:,a);
+    pixlatcorn_a = pixlatcorn(:,a);
+    %[pixloncorn_a, pixlatcorn_a] = uncross_corners(pixloncorn(:,a), pixlatcorn(:,a));
+    [pixloncorn_a, pixlatcorn_a] = poly2cw(pixloncorn_a, pixlatcorn_a);
+    % create a polygon that represents the area of overlap and calculate its area
+    % in km.
+    [xt, yt] = polybool('intersection',gc_xall,gc_yall,pixloncorn_a,pixlatcorn_a);
+    if isempty(xt) || isempty(yt)
+        continue
+    elseif any(isnan(xt))
+        error('load_and_grid_domino:calc_pix_grid_overlap','W%d: The pixel corners are wrong (%s, %s) at %d',t.ID,mat2str(pixloncorn_a),mat2str(pixlatcorn_a), a);
+    end
+    overlap_area = areaint(yt,xt,earth_ellip);
+    Q(a) = overlap_area/gc_area;
+end
+
+end
+
+function [x,y]= uncross_corners(x,y)
+    m1 = (y(3) - y(2))/(x(3) - x(2));
+    b1 = y(2) - m1*x(2);
+    m2 = (y(4) - y(1))/(x(4) - x(1));
+    b2 = y(1) - m2*x(1);
+    flip_bool = false;
+    if ~isinf(m1) && ~isinf(m2)
+        % As long as neither slope is infinite, solve for the x-coordinate
+        % of the intercept and see if it falls inside the polygon - if so,
+        % the corners need flipped.
+        inpt = (b2-b1)/(m1-m2);
+        if inpt > min(x(2:3)) && inpt < max(x(2:3))
+            flip_bool = true;
+        end 
+    elseif isinf(m1) && ~isinf(m2)
+        % If one is infinite, fine the y-coord where the other one is at
+        % it's x-coordinate and do the same test
+        inpt = m2*x(2)+b2;
+        if inpt > min(y(2:3)) && inpt < max(y(2:3))
+            flip_bool = true;
+        end 
+    elseif isinf(m2) && ~isinf(m1)
+        inpt = m1*x(1) + b1; 
+        if inpt > min(y([1,4])) && inpt < max(y([1,4]))
+            flip_bool = true;
+        end 
+        % If both are infinite, they are parallel and the corners do not
+        % need flipped.
+    end 
+    if flip_bool
+        tmp = x(4);
+        x(4) = x(3);
+        x(3) = tmp;
+        tmp = y(4);
+        y(4) = y(3);
+        y(3) = tmp;
+    end 
 end
 
 function no2_columns = integrate_omi_profile(gc_no2, gc_bxhght, gc_pressure, gc_ndens_air, gc_tp, binned_aks)
@@ -442,7 +689,7 @@ no2_columns = squeeze(nansum2(omi_no2_ndens,3));
 
 end
 
-function no2_columns = integrate_domino_profile(gc_no2, gc_bxhght, gc_pressure, gc_ndens_air, gc_tp, binned_aks, binned_pres, binned_pres_edge)
+function no2_columns = integrate_domino_profile(gc_no2, gc_bxhght, gc_pressure, gc_ndens_air, gc_tp, binned_aks, binned_pres, binned_pres_edge, binned_weights)
 % This will integrate the geos-chem columns weighted by the OMI AKs after
 % interpolating to the OMI pressures.  The integration will be carried out
 % after that in the same manner as integrate_geoschem_profile, that is,
@@ -456,6 +703,10 @@ function no2_columns = integrate_domino_profile(gc_no2, gc_bxhght, gc_pressure, 
 % pressure levels, and the GC tropopause will be used to restrict the
 % column.
 
+tstr = getCurrentTask();
+if isempty(tstr)
+    tstr.ID = 0;
+end
 
 sz = size(gc_no2);
 if numel(sz) < 4;
@@ -481,12 +732,14 @@ for a=1:sz(1)
             end
             omi_pres = binned_pres{a,b};
             omi_pres_edge = binned_pres_edge{a,b};
+            omi_weights = binned_weights{a,b};
             
             nans = all(isnan(omi_aks),1);
             omi_aks(:,nans) = [];
             omi_pres(:,nans) = [];
             omi_pres_edge(:,nans) = [];
-            
+            omi_weights(nans) = [];
+
             gc_pvec = cat(1,squeeze(gc_pressure(a,b,:,t)),0.01);
             gc_zvec = cat(1, 0, squeeze(gc_z(a,b,:,t)));
             gc_nair_vec = squeeze(gc_ndens_air(a,b,:,t));
@@ -528,8 +781,8 @@ for a=1:sz(1)
                 % conversions)
                 omi_no2_columns(p) = nansum2((omi_no2_p * 1e-9) .* (omi_ndens_air_p * 1e-6) .* (omi_bxhght_p * 100) .* omi_aks(:,p));
             end
-            
-            no2_columns(a,b,t) = nanmean(omi_no2_columns);
+            %fprintf('W%d: (%d,%d): Size omi_no2_columns = %s, Size omi_weights = %s, size omi_aks = %s\n',tstr.ID,a,b,mat2str(size(omi_no2_columns)),mat2str(size(omi_weights)), mat2str(size(omi_aks)));
+            no2_columns(a,b,t) = nansum2(omi_no2_columns .* omi_weights)./nansum2(omi_weights);
         end
     end
 end
