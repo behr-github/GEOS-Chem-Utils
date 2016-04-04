@@ -75,6 +75,8 @@ function [ gc_no2 ] = gc_column_omi_ak( gc_no2, gc_bxhght, gc_pressure, gc_ndens
 %   Dependencies:
 %       Classes/JLLErrors.m
 
+E=JLLErrors;
+
 % Get run directories
 global onCluster
 if isempty(onCluster)
@@ -93,17 +95,25 @@ end
 global run_mode;
 if onCluster && isempty(run_mode)
     E.runscript_error('run_mode');
-else
+elseif ~onCluster;
     run_mode = 'both';
+    fprintf('Setting run_mode to %s\n',run_mode);
 end
 
 global ak_save_dir;
 if onCluster && isempty(ak_save_dir)
     E.runscript_error('ak_save_dir');
-else
+elseif ~onCluster
     ak_save_dir = '/Volumes/share2/USERS/LaughnerJ';
+    fprintf('Setting ak_save_dir to %s\n',ak_save_dir);
 end
 
+global overwrite
+if onCluster && isempty(overwrite)
+    E.runscript_error('overwrite')
+elseif ~onCluster
+    overwrite = true;
+end
 
 allowed_modes = {'bin_aks','apply_aks','both'};
 if ~ismember(run_mode, allowed_modes)
@@ -111,6 +121,8 @@ if ~ismember(run_mode, allowed_modes)
 end
 
 fprintf('OMI dir = %s\n',omi_he5_dir);
+fprintf('Run mode = %s\n',run_mode);
+fprintf('AK save dir = %s\n',ak_save_dir);
 
 [gc_loncorn, gc_latcorn] = geos_chem_corners;
 
@@ -121,19 +133,27 @@ if isstruct(gc_no2)
     gc_pressure_data = gc_pressure.dataBlock;
     gc_ndens_air_data = gc_ndens_air.dataBlock;
     gc_tp_data = gc_tp.dataBlock;
+    columns = nan(size(gc_tp_data));
 elseif strcmpi(run_mode,'bin_aks')
     tVec = datenum(gc_no2):datenum(gc_bxhght);
+    % parfor needs these to be slicable in the proper dimensions.
+    gc_no2_data = nan(1,1,1,numel(tVec));
+    gc_bxhght_data = nan(1,1,1,numel(tVec));
+    gc_pressure_data = nan(1,1,1,numel(tVec));
+    gc_ndens_air_data = nan(1,1,1,numel(tVec));
+    gc_tp_data = nan(1,1,numel(tVec));
+    columns = nan(144, 91, numel(tVec));
 else
     E.badinput('If not running in bin only mode, then the GEOS-Chem output structures MUST be passed as arguments');
 end
-columns = nan(size(gc_tp_data));
 
 parfor d=1:numel(tVec)
     fprintf('Loading OMI files for %s\n',datestr(tVec(d)));
     earth_ellip = referenceEllipsoid('wgs84','kilometer');
     if strcmpi(retrieval,'omno2')
         save_name = sprintf('OMNO2_AK_%04d%02d%02d.mat',year(tVec(d)),month(tVec(d)),day(tVec(d)));
-        if exist(fullfile(ak_save_dir,'OMNO2',save_name),'file')
+        if strcmpi(run_mode,'bin_aks') && exist(fullfile(ak_save_dir,'OMNO2',save_name),'file') && ~overwrite
+            fprintf('File %s exists, skipping\n',save_name);
             continue
         end
         if ismember(run_mode,{'bin_aks','both'})
@@ -157,7 +177,8 @@ parfor d=1:numel(tVec)
         end
     elseif strcmpi(retrieval,'domino')
         save_name = sprintf('DOMINO_AK_%04d%02d%02d.mat',year(tVec(d)),month(tVec(d)),day(tVec(d)));
-        if exist(fullfile(ak_save_dir,'DOMINO',save_name),'file')
+        if strcmpi(run_mode,'bin_aks') && exist(fullfile(ak_save_dir,'DOMINO',save_name),'file') && ~overwrite
+            fprintf('File %s exists, skipping\n',save_name);
             continue
         end
         if ismember(run_mode, {'bin_aks','both'})
@@ -197,7 +218,9 @@ parfor d=1:numel(tVec)
     
 end
 
-gc_no2.Columns = columns;
+if ~strcmpi(run_mode,'bin_aks')
+    gc_no2.Columns = columns;
+end
 
 end
 
@@ -304,6 +327,9 @@ for a=1:numel(F)
     omi_lat = cat(2, omi_lat, this_lat);
     omi_loncorn = cat(3, omi_loncorn, this_loncorn);
     omi_latcorn = cat(3, omi_latcorn, this_latcorn);
+    for p=1:numel(omi_lat)
+        [omi_loncorn(:,p), omi_latcorn(:,p)] = uncross_corners(omi_loncorn(:,p), omi_latcorn(:,p));
+    end
 end
 
 end
@@ -387,6 +413,9 @@ for a=1:numel(F)
     omi_lat = cat(2, omi_lat, this_lat);
     omi_loncorn = cat(3, omi_loncorn, this_loncorn);
     omi_latcorn = cat(3, omi_latcorn, this_latcorn);
+    for p=1:numel(omi_lat)
+        [omi_loncorn(:,p), omi_latcorn(:,p)] = uncross_corners(omi_loncorn(:,p), omi_latcorn(:,p));
+    end
 end
 
 end
@@ -477,6 +506,7 @@ for a=1:gc_nlat
                 this_latcorn = omi_latcorn(:,xx);
                 Q = calc_overlap_weight([x1 x2], [y1 y2], this_loncorn, this_latcorn, earth_ellip);
                 W = repmat(Q .* this_aw', size(this_ak,1), 1);
+                W(:,all(isnan(this_ak),1)) = nan;
                 this_ak_mean = nansum2(this_ak .* W, 2) ./ nansum2(W(1,:),2);
                 aks(:,a,b) = this_ak_mean;
             else
@@ -497,7 +527,7 @@ for a=1:gc_nlat
             this_latcorn = omi_latcorn(:,xx);
             Q = calc_overlap_weight([x1 x2], [y1 y2], this_loncorn, this_latcorn, earth_ellip);
             W = Q .* omi_aw(xx)';
-            fprintf('W%d: (%d, %d): Size(Q) = %s, size(W) = %s, size(omi_aw(xx))'' = %s, size(aks{a,b}) = %s\n', t.ID, a, b, mat2str(size(Q)), mat2str(size(W)), mat2str(size(omi_aw(xx)')), mat2str(size(aks{a,b})));
+            %fprintf('W%d: (%d, %d): Size(Q) = %s, size(W) = %s, size(omi_aw(xx))'' = %s, size(aks{a,b}) = %s\n', t.ID, a, b, mat2str(size(Q)), mat2str(size(W)), mat2str(size(omi_aw(xx)')), mat2str(size(aks{a,b})));
             weights{a,b} = W;
         end
     end
@@ -523,13 +553,15 @@ gc_yall = [gc_lat(1), gc_lat(2), gc_lat(2), gc_lat(1), gc_lat(1)];
 [gc_xall, gc_yall] = poly2cw(gc_xall, gc_yall);
 gc_area = areaint(gc_yall, gc_xall, earth_ellip);
 for a=1:size(pixloncorn,2)
-    if any(isnan(pixloncorn(:,a))) || any(isnan(pixlatcorn(:,a))) || any(pixloncorn(:,a) < -180) || any(pixloncorn(:,a) > 180) || any(pixlatcorn(:,a) < -90) || any(pixlatcorn(:,a) > 90) || any(sign(pixloncorn(:,a))~=sign(pixloncorn(1,a)))
+    if any(isnan(pixloncorn(:,a))) || any(isnan(pixlatcorn(:,a))) || any(pixloncorn(:,a) < -180) || any(pixloncorn(:,a) > 180) || any(pixlatcorn(:,a) < -90) || any(pixlatcorn(:,a) > 90) || (any(sign(pixloncorn(:,a))~=sign(pixloncorn(1,a))) && (any(abs(pixloncorn(:,a))>90) || any(abs(pixlatcorn(:,a))>80)))
         % the last test handles issues where a pixel straddles the international
         % date line. there's better ways to handle it (wrap the pixel corner around
         % to be the same sign as the GC corners) but I don't feel like doing that atm.
         continue;
     end
-    [pixloncorn_a, pixlatcorn_a] = uncross_corners(pixloncorn(:,a), pixlatcorn(:,a));
+    pixloncorn_a = pixloncorn(:,a);
+    pixlatcorn_a = pixlatcorn(:,a);
+    %[pixloncorn_a, pixlatcorn_a] = uncross_corners(pixloncorn(:,a), pixlatcorn(:,a));
     [pixloncorn_a, pixlatcorn_a] = poly2cw(pixloncorn_a, pixlatcorn_a);
     % create a polygon that represents the area of overlap and calculate its area
     % in km.
@@ -537,7 +569,7 @@ for a=1:size(pixloncorn,2)
     if isempty(xt) || isempty(yt)
         continue
     elseif any(isnan(xt))
-        error('load_and_grid_domino:calc_pix_grid_overlap','W%d: The pixel corners are wrong (%s, %s) at [%d, %d]',t.ID,mat2str(pixloncorn_a),mat2str(pixlatcorn_a), xx, yy);
+        error('load_and_grid_domino:calc_pix_grid_overlap','W%d: The pixel corners are wrong (%s, %s) at %d',t.ID,mat2str(pixloncorn_a),mat2str(pixlatcorn_a), a);
     end
     overlap_area = areaint(yt,xt,earth_ellip);
     Q(a) = overlap_area/gc_area;
@@ -749,7 +781,7 @@ for a=1:sz(1)
                 % conversions)
                 omi_no2_columns(p) = nansum2((omi_no2_p * 1e-9) .* (omi_ndens_air_p * 1e-6) .* (omi_bxhght_p * 100) .* omi_aks(:,p));
             end
-            fprintf('W%d: (%d,%d): Size omi_no2_columns = %s, Size omi_weights = %s, size omi_aks = %s\n',tstr.ID,a,b,mat2str(size(omi_no2_columns)),mat2str(size(omi_weights)), mat2str(size(omi_aks)));
+            %fprintf('W%d: (%d,%d): Size omi_no2_columns = %s, Size omi_weights = %s, size omi_aks = %s\n',tstr.ID,a,b,mat2str(size(omi_no2_columns)),mat2str(size(omi_weights)), mat2str(size(omi_aks)));
             no2_columns(a,b,t) = nansum2(omi_no2_columns .* omi_weights)./nansum2(omi_weights);
         end
     end
