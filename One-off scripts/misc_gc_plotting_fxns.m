@@ -1036,8 +1036,8 @@ end
         % Then load the satellite data and average it down for each
         % regions.
         
-        omno2_path = '/Volumes/share2/USERS/LaughnerJ/DOMINO-OMNO2_comparision/OMNO2/2.5x2.0-avg';
-        domino_path = '/Volumes/share2/USERS/LaughnerJ/DOMINO-OMNO2_comparision/DOMINO/2.5x2.0-avg';
+        omno2_path = '/Volumes/share2/USERS/LaughnerJ/DOMINO-OMNO2_comparision/OMNO2/2.5x2.0-avg-newweight';
+        domino_path = '/Volumes/share2/USERS/LaughnerJ/DOMINO-OMNO2_comparision/DOMINO/2.5x2.0-avg-newweight';
         
         fprintf('Loading OMNO2 data... Please be patient...   ');
         F_omno2 = dir(fullfile(omno2_path,'OMI*.mat'));
@@ -1077,27 +1077,52 @@ end
         
         fprintf('Dividing sat data into regions...   ');
         regions = {'sa','saf','naf','seas'};
+        %regions = {'na','sa','saf','naf','neur','seas'};
         omno2_no2 = make_empty_struct_from_cell(regions);
         omno2_std = make_empty_struct_from_cell(regions);
         domino_no2 = make_empty_struct_from_cell(regions);
         domino_std = make_empty_struct_from_cell(regions);
+        
+        omno2_db = make_empty_struct_from_cell(regions);
+        domino_db = make_empty_struct_from_cell(regions);
         for r=1:numel(regions)
             [xx,yy] = region_xxyy(regions{r});
             [~,~,timeind] = define_regions(regions{r});
-            omno2_no2.(regions{r}) = nanmean(reshape(omno2_data(xx,yy,timeind),1,[]));
-            omno2_std.(regions{r}) = nanstd(reshape(omno2_data(xx, yy, timeind),1,[]));
+            omno2_reg = reshape(omno2_data(xx,yy,timeind),1,[]);
+            omno2_wt = reshape(omno2_weight(xx,yy,timeind),1,[]);
+            %omno2_no2.(regions{r}) = nanmean(omno2_reg);
+            omno2_no2.(regions{r}) = nansum2(omno2_reg .* omno2_wt) / nansum2(omno2_wt);
+            notnans = ~isnan(omno2_reg) & ~isnan(omno2_wt);
+            %omno2_std.(regions{r}) = nanstd(omno2_reg);
+            omno2_std.(regions{r}) = sqrt(var(omno2_reg(notnans),omno2_wt(notnans)));
             
-            domino_no2.(regions{r}) = nanmean(reshape(domino_data(xx, yy, timeind),1,[]));
-            domino_std.(regions{r}) = nanstd(reshape(domino_data(xx, yy, timeind),1,[]));
+            omno2_db.(regions{r}).columns = omno2_data(xx,yy,timeind);
+            omno2_db.(regions{r}).weight = omno2_weight(xx,yy,timeind);
+            omno2_db.(regions{r}).lon = omno2_lon(xx,yy);
+            omno2_db.(regions{r}).lat = omno2_lat(xx,yy);
+            
+            domino_reg = reshape(domino_data(xx,yy,timeind),1,[]);
+            domino_wt = reshape(domino_weight(xx,yy,timeind),1,[]);
+            %domino_no2.(regions{r}) = nanmean(domino_reg);
+            domino_no2.(regions{r}) = nansum2(domino_reg .* domino_wt) / nansum2(domino_wt);
+            notnans = ~isnan(domino_reg) & ~isnan(domino_wt);
+            %domino_std.(regions{r}) = nanstd(domino_reg);
+            domino_std.(regions{r}) = sqrt(var(domino_reg(notnans), domino_wt(notnans)));
+            
+            domino_db.(regions{r}).columns = domino_data(xx,yy,timeind);
+            domino_db.(regions{r}).weight = domino_weight(xx,yy,timeind);
+            domino_db.(regions{r}).lon = domino_lon(xx,yy);
+            domino_db.(regions{r}).lat = domino_lat(xx,yy);
+            
         end
         fprintf('Done.\n');
         
         % Now load each of the 3 cases from GEOS-Chem for each of the
         % products' AKs and get the same regions.
-        gc_path = '/Users/Josh/Documents/MATLAB/MPN Project/Workspaces/Pickering Parameterization/DailyOMI/AllAKsDaily';
+        gc_path = '/Users/Josh/Documents/MATLAB/MPN Project/Workspaces/Pickering Parameterization/DailyOMI/AllAKsDaily-newweight';
         chems = {'JPLnoMPN','HendwMPN-PNA-N2O5','HendwMPN-PNA-N2O5'};
-        omno2_ak_files = {'JPLnoMPN-Pickp0-OMI_NO2_aks.mat','HendwMPN_PNA_N2O5-Pickp0-OMI_NO2_OMI_aks.mat','HendwMPN_PNA_N2O5-Pickp33-OMI_NO2_OMI_aks.mat'};
-        dom_ak_files = {'JPLnoMPN-Pickp0-OMI_NO2_DOMINO_aks.mat','HendwMPN-PNA-N2O5-Pickp0-OMI_NO2_DOMINO_aks.mat','HendwMPN-PNA-N2O5-Pickp33-OMI_NO2_DOMINO_aks.mat'};
+        omno2_ak_files = {'JPLnoMPN-Pickp0-OMI_NO2_OMNO2_aks_newweight.mat','HendwMPN-PNA-N2O5-Pickp0-OMI_NO2_OMNO2_aks_newweight.mat','HendwMPN-PNA-N2O5-Pickp33-OMI_NO2_OMNO2_aks_newweight.mat'};
+        dom_ak_files = {'JPLnoMPN-Pickp0-OMI_NO2_DOMINO_aks_newweight.mat','HendwMPN-PNA-N2O5-Pickp0-OMI_NO2_DOMINO_aks_newweight.mat','HendwMPN-PNA-N2O5-Pickp33-OMI_NO2_DOMINO_aks_newweight.mat'};
         fields = {'Base','Final','Final33'};
         gc_data = make_empty_struct_from_cell(fields);
         omno2_gc = make_empty_struct_from_cell(regions,gc_data);
@@ -1112,8 +1137,15 @@ end
             for r=1:numel(regions)
                 [xx,yy] = region_xxyy(regions{r});
                 [~,~,timeind] = define_regions(regions{r});
-                omno2_gc.(regions{r}).(fields{a}).mean = nanmean(reshape(gc(xx,yy,timeind),1,[]));
-                omno2_gc.(regions{r}).(fields{a}).std = nanstd(reshape(gc(xx,yy,timeind),1,[]));
+                gc_reg = reshape(gc(xx,yy,timeind),1,[]);
+                gc_wt = reshape(omno2_weight(xx,yy,timeind),1,[]);
+                omno2_gc.(regions{r}).(fields{a}).mean = nansum2(gc_reg .* gc_wt)./nansum2(gc_wt);
+                notnans = ~isnan(gc_reg) & ~isnan(gc_wt);
+                omno2_gc.(regions{r}).(fields{a}).std = sqrt(var(gc_reg(notnans), gc_wt(notnans)));
+                %omno2_gc.(regions{r}).(fields{a}).mean = nanmean(reshape(gc(xx,yy,timeind),1,[]));
+                %omno2_gc.(regions{r}).(fields{a}).std = nanstd(reshape(gc(xx,yy,timeind),1,[]));
+                
+                omno2_db.(regions{r}).(fields{a}) = gc(xx,yy,timeind);
             end
             fprintf('Done.\n');
             clear('O','gc')
@@ -1127,8 +1159,15 @@ end
             for r=1:numel(regions)
                 [xx,yy] = region_xxyy(regions{r});
                 [~,~,timeind] = define_regions(regions{r});
-                domino_gc.(regions{r}).(fields{a}).mean = nanmean(reshape(gc(xx,yy,timeind),1,[]));
-                domino_gc.(regions{r}).(fields{a}).std = nanstd(reshape(gc(xx,yy,timeind),1,[]));
+                gc_reg = reshape(gc(xx,yy,timeind),1,[]);
+                gc_wt = reshape(domino_weight(xx,yy,timeind),1,[]);
+                domino_gc.(regions{r}).(fields{a}).mean = nansum2(gc_reg .* gc_wt)./nansum2(gc_wt);
+                notnans = ~isnan(gc_reg) & ~isnan(gc_wt);
+                domino_gc.(regions{r}).(fields{a}).std = sqrt(var(gc_reg(notnans), gc_wt(notnans)));
+                %domino_gc.(regions{r}).(fields{a}).mean = nanmean(reshape(gc(xx,yy,timeind),1,[]));
+                %domino_gc.(regions{r}).(fields{a}).std = nanstd(reshape(gc(xx,yy,timeind),1,[]));
+                
+                domino_db.(regions{r}).(fields{a}) = gc(xx,yy,timeind);
             end
             fprintf('Done.\n')
             clear('D','gc')
@@ -1162,7 +1201,9 @@ end
             end
         end
         set(gca,'xtick',[1 3 5 7]);
+        %set(gca,'xtick',[1 3 5 7 9 11]);
         set(gca,'xticklabels',{'S. Am.','S. Af.','N. Af.', 'SE Asia'});
+        %set(gca,'xticklabels',{'N. Am.','S. Am.','S. Af.','N. Af.', 'N. Eur.', 'SE Asia'});
         set(gca,'fontsize',16);
         legend(l',{'OMNO2','Base case','Final case','Final case +33%'});
         
@@ -1178,7 +1219,9 @@ end
             end
         end
         set(gca,'xtick',[1 3 5 7]);
+        %set(gca,'xtick',[1 3 5 7 9 11]);
         set(gca,'xticklabels',{'S. Am.','S. Af.','N. Af.', 'SE Asia'});
+        %set(gca,'xticklabels',{'N. Am.','S. Am.','S. Af.','N. Af.', 'N. Eur.', 'SE Asia'});
         set(gca,'fontsize',16);
         legend(l',{'DOMINO','Base case','Final case','Final case +33%'});
     end
