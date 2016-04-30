@@ -1,4 +1,4 @@
-function [ StructIn ] = integrate_geoschem_profile( StructIn, unit_conv, time_indicies, cloud_column_sel, aks )
+function [ StructIn ] = integrate_geoschem_profile( StructIn, unit_conv, time_indicies, cloud_column_sel, aks, ak_pres_mat )
 %integrate_geoschem_profile Integrates GEOS-Chem output tracers into columns
 %   While GEOS-Chem does have the capability of outputting instantaneous
 %   columns for comparison to satellite overpasses, if you didn't output
@@ -38,8 +38,8 @@ DEBUG_LEVEL = 1;
 %%%%% INPUT PARSING AND CHECKING %%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-% Check for 2 to 4 inputs
-narginchk(2,5);
+% Check for 2 to 6 inputs
+narginchk(2,6);
 
 % Check that the first argument is a structure
 if ~isstruct(StructIn)
@@ -124,12 +124,17 @@ else
         E.badinput('The AKs matrix must have the same lat/lon coordinates as the GEOS-Chem datablocks')
     elseif size(aks,4) ~= size(StructIn(nair_ind).dataBlock,4)
         E.badinput('The AKs matrix must have the same number of times as the GEOS-Chem datablocks');
-    elseif sz_aks(3) ~= 35
-        E.badinput('The AK functionality assumes that OMI AKs are given for a 35 pressure level grid. This does not appear to be the case.')
+    elseif sz_aks(3) ~= 35 && ~exist('ak_pres_mat','var')
+        E.badinput('If no pressure levels for the AKs given, the AK functionality assumes that OMI AKs are given for a 35 pressure level grid. This does not appear to be the case.')
+    elseif exist('ak_pres_mat','var') && (ndims(ak_pres_mat) ~= ndims(aks) || any(size(ak_pres_mat) ~= size(aks)))
+        E.badinput('The aks and ak_pres matrices must have the same dimensions');
     end
 end
-% Define the AK pressure vector:
-ak_pres = [1020 1010 1000 990 975 960 945 925 900 875 850 825 800 770 740 700 660 610 560 500 450 400 350 280 200 120 60 35 20 12 8 5 3 1.5 0.8];
+% Define the AK pressure vector if not given:
+if ~exist('ak_pres_mat','var')
+    ak_pres = permute([1020 1010 1000 990 975 960 945 925 900 875 850 825 800 770 740 700 660 610 560 500 450 400 350 280 200 120 60 35 20 12 8 5 3 1.5 0.8],[1 3 2]);
+    ak_pres_mat = repmat(ak_pres, size(aks,1), size(aks,2), 1, size(aks,4));
+end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%% VARIABLE PREP %%%%%
@@ -214,7 +219,7 @@ for b=1:numel(StructIn)
                 
                 ak_vec = squeeze(ak_subset(i,j,:));
                 % Interpolate the AKs to the GC pressures
-                ak_interp = interp1(ak_pres, ak_vec, p_vec, 'linear', 'extrap');
+                ak_interp = interp1(squeeze(ak_pres_mat(i,j,:,a)), ak_vec, p_vec, 'linear', 'extrap');
                 
                 if cloud_column_sel > 0
                     cldtop_val = cldtop_subset(i,j);
