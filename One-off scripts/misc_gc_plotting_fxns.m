@@ -1017,6 +1017,8 @@ end
         % AKs are different for each product. So each region will have 8
         % points, four per panel.
         
+        plot_ratio_bool = strcmpi(ask_multichoice('Plot as ratios of model to satellite?',{'y','n'}),'y');
+        
         if ismember('sdom',varargin)
             sdom = true;
             fprintf('Using std. dev. of mean\n');
@@ -1192,12 +1194,25 @@ end
         
         for r=1:numel(regions)
             x = (r-1)*2+1;
-            l(1) = line(x-0.5,omno2_no2.(regions{r}),'color','k','marker','o','linewidth',2);
-            scatter_errorbars(x-0.5, omno2_no2.(regions{r}), omno2_std.(regions{r})/sqrtn_o, 'color','k','linewidth',2);
-            for a=1:numel(fields)
-                dx = a*0.25 - 0.5;
-                l(a+1) = line(x+dx, omno2_gc.(regions{r}).(fields{a}).mean, 'color', cols{a}, 'marker', marks{a}, 'linewidth', 2);
-                scatter_errorbars(x+dx, omno2_gc.(regions{r}).(fields{a}).mean, omno2_gc.(regions{r}).(fields{a}).std/sqrtn_o, 'color', cols{a}, 'linewidth',2);
+            if ~plot_ratio_bool
+                l(1) = line(x-0.5,omno2_no2.(regions{r}),'color','k','marker','o','linewidth',2);
+                scatter_errorbars(x-0.5, omno2_no2.(regions{r}), omno2_std.(regions{r})/sqrtn_o, 'color','k','linewidth',2);
+                for a=1:numel(fields)
+                    dx = a*0.25 - 0.5;
+                    l(a+1) = line(x+dx, omno2_gc.(regions{r}).(fields{a}).mean, 'color', cols{a}, 'marker', marks{a}, 'linewidth', 2);
+                    scatter_errorbars(x+dx, omno2_gc.(regions{r}).(fields{a}).mean, omno2_gc.(regions{r}).(fields{a}).std/sqrtn_o, 'color', cols{a}, 'linewidth',2);
+                end
+            else
+                % Plot upper and lower limits
+                ul = omno2_no2.(regions{r}) + omno2_std.(regions{r})/sqrtn_o;
+                ll = omno2_no2.(regions{r}) - omno2_std.(regions{r})/sqrtn_o;
+                line(x + [-0.5, 0.5], [ul ul], 'color', 'k', 'linewidth', 2, 'linestyle', '--');
+                line(x + [-0.5, 0.5], [ll ll], 'color', 'k', 'linewidth', 2, 'linestyle', '--');
+                % The the ratio of each model case to the satellite
+                for a=1:numel(fields)
+                    dx = a*0.5 - 1;
+                    l(a) = line(x+dx, omno2_gc.(regions{r}).(fields{a}).mean / omno2_no2.(regions{r}),'color',cols{a},'marker',marks{a}, 'linestyle','none', 'linewidth', 2);
+                end
             end
         end
         set(gca,'xtick',[1 3 5 7]);
@@ -1205,17 +1220,34 @@ end
         set(gca,'xticklabels',{'S. Am.','S. Af.','N. Af.', 'SE Asia'});
         %set(gca,'xticklabels',{'N. Am.','S. Am.','S. Af.','N. Af.', 'N. Eur.', 'SE Asia'});
         set(gca,'fontsize',16);
-        legend(l',{'OMNO2','Base case','Final case','Final case +33%'});
+        if ~plot_ratio_bool
+            legend(l',{'OMNO2','Base case','Final case','Final case +33%'});
+        else
+            legend(l',{'Base case','Final case','Final case +33%'});
+        end
         
         subplot(2,1,2);
         for r=1:numel(regions)
             x = (r-1)*2+1;
-            l(1) = line(x-0.5,domino_no2.(regions{r}),'color','k','marker','o','linewidth',2);
-            scatter_errorbars(x-0.5, domino_no2.(regions{r}), domino_std.(regions{r})/sqrtn_d, 'color','k','linewidth',2);
-            for a=1:numel(fields)
-                dx = a*0.25 - 0.5;
-                l(a+1) = line(x+dx, domino_gc.(regions{r}).(fields{a}).mean, 'color', cols{a}, 'marker', marks{a}, 'linewidth', 2);
-                scatter_errorbars(x+dx, domino_gc.(regions{r}).(fields{a}).mean, domino_gc.(regions{r}).(fields{a}).std/sqrtn_d, 'color', cols{a}, 'linewidth',2);
+            if ~plot_ratio_bool
+                l(1) = line(x-0.5,domino_no2.(regions{r}),'color','k','marker','o','linewidth',2);
+                scatter_errorbars(x-0.5, domino_no2.(regions{r}), domino_std.(regions{r})/sqrtn_d, 'color','k','linewidth',2);
+                for a=1:numel(fields)
+                    dx = a*0.25 - 0.5;
+                    l(a+1) = line(x+dx, domino_gc.(regions{r}).(fields{a}).mean, 'color', cols{a}, 'marker', marks{a}, 'linewidth', 2);
+                    scatter_errorbars(x+dx, domino_gc.(regions{r}).(fields{a}).mean, domino_gc.(regions{r}).(fields{a}).std/sqrtn_d, 'color', cols{a}, 'linewidth',2);
+                end
+            else
+                % Plot upper and lower limits
+                ul = domino_no2.(regions{r}) + domino_std.(regions{r})/sqrtn_d;
+                ll = domino_no2.(regions{r}) - domino_std.(regions{r})/sqrtn_d;
+                line(x + [-0.5, 0.5], [ul ul], 'color', 'k', 'linewidth', 2, 'linestyle', '--');
+                line(x + [-0.5, 0.5], [ll ll], 'color', 'k', 'linewidth', 2, 'linestyle', '--');
+                % The the ratio of each model case to the satellite
+                for a=1:numel(fields)
+                    dx = a*0.5 - 1;
+                    l(a) = line(x+dx, domino_gc.(regions{r}).(fields{a}).mean / domino_no2.(regions{r}),'color',cols{a},'marker',marks{a}, 'linestyle','none', 'linewidth', 2);
+                end
             end
         end
         set(gca,'xtick',[1 3 5 7]);
@@ -1223,7 +1255,11 @@ end
         set(gca,'xticklabels',{'S. Am.','S. Af.','N. Af.', 'SE Asia'});
         %set(gca,'xticklabels',{'N. Am.','S. Am.','S. Af.','N. Af.', 'N. Eur.', 'SE Asia'});
         set(gca,'fontsize',16);
-        legend(l',{'DOMINO','Base case','Final case','Final case +33%'});
+        if ~plot_ratio_bool
+            legend(l',{'DOMINO','Base case','Final case','Final case +33%'});
+        else
+            legend(l',{'Base case','Final case','Final case +33%'});
+        end
     end
 end
 
