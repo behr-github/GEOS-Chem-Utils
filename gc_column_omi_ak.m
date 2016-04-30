@@ -134,6 +134,7 @@ if isstruct(gc_no2)
     gc_ndens_air_data = gc_ndens_air.dataBlock;
     gc_tp_data = gc_tp.dataBlock;
     columns = nan(size(gc_tp_data));
+    total_weights = nan(size(gc_tp_data));
 elseif strcmpi(run_mode,'bin_aks')
     tVec = datenum(gc_no2):datenum(gc_bxhght);
     % parfor needs these to be slicable in the proper dimensions.
@@ -143,9 +144,12 @@ elseif strcmpi(run_mode,'bin_aks')
     gc_ndens_air_data = nan(1,1,1,numel(tVec));
     gc_tp_data = nan(1,1,numel(tVec));
     columns = nan(144, 91, numel(tVec));
+    total_weights = nan(1, 1, numel(tVec));
 else
     E.badinput('If not running in bin only mode, then the GEOS-Chem output structures MUST be passed as arguments');
 end
+
+sz_wt = size(total_weights);
 
 parfor d=1:numel(tVec)
     fprintf('Loading OMI files for %s\n',datestr(tVec(d)));
@@ -160,20 +164,31 @@ parfor d=1:numel(tVec)
             [omi_aks, omi_lon, omi_lat, omi_loncorn, omi_latcorn] = load_omi_files(year(tVec(d)), month(tVec(d)), day(tVec(d)), omi_he5_dir);
             omi_pixweight = calc_pix_areaweight(omi_loncorn, omi_latcorn);
             fprintf('Binnind OMI AKs for %s\n',datestr(tVec(d)));
-            binned_aks = bin_omi_aks(gc_loncorn, gc_latcorn, omi_aks, omi_lon, omi_lat, omi_loncorn, omi_latcorn, omi_pixweight, earth_ellip);
+            [binned_aks, binned_weights] = bin_omi_aks(gc_loncorn, gc_latcorn, omi_aks, omi_lon, omi_lat, omi_loncorn, omi_latcorn, omi_pixweight, earth_ellip);
             
             % binned_aks is output in ak_vec x gc_nlat x gc_nlon, rearrange to
             % gc_nlon x gc_nlat x ak_vec x time.
             binned_aks = permute(binned_aks, [3 2 1]);
+            binned_weights = binned_weights';
 
-            saveOmno2(fullfile(ak_save_dir,'OMNO2',save_name),binned_aks);
+            saveOmno2(fullfile(ak_save_dir,'OMNO2',save_name),binned_aks,binned_weights);
         elseif ismember(run_mode,{'apply_aks','both'})
             if strcmpi(run_mode,'apply_aks')
                 AK = load(fullfile(ak_save_dir,'OMNO2',save_name));
                 binned_aks = AK.binned_aks;
+                binned_weights = AK.binned_weights;
             end
         
             columns(:,:,d) = integrate_omi_profile(gc_no2_data(:,:,:,d), gc_bxhght_data(:,:,:,d), gc_pressure_data(:,:,:,d), gc_ndens_air_data(:,:,:,d), gc_tp_data(:,:,d), binned_aks);
+            tmp_wts = nan(sz_wt(1:2));
+            for i=1:sz_wt(1)
+                for j=1:sz_wt(2)
+                    if ~isempty(binned_weights{i,j})
+                        tmp_wts(i,j) = nansum2(binned_weights{i,j});
+                    end
+                end
+            end
+            total_weights(:,:,d) = tmp_wts;
         end
     elseif strcmpi(retrieval,'domino')
         save_name = sprintf('DOMINO_AK_%04d%02d%02d.mat',year(tVec(d)),month(tVec(d)),day(tVec(d)));
@@ -185,7 +200,7 @@ parfor d=1:numel(tVec)
             [omi_aks, omi_pres, omi_pres_edge, omi_lon, omi_lat, omi_loncorn, omi_latcorn] = load_domino_files(year(tVec(d)), month(tVec(d)), day(tVec(d)), omi_he5_dir);
             omi_pixweight = calc_pix_areaweight(omi_loncorn, omi_latcorn);
             fprintf('Binnind OMI AKs for %s\n',datestr(tVec(d)));
-            [binned_aks, binned_pres, binned_pres_edge, binned_weights] = bin_omi_aks(gc_loncorn, gc_latcorn, omi_aks, omi_lon, omi_lat, omi_loncorn, omi_latcorn, omi_pixweight, earth_ellip, omi_pres, omi_pres_edge);
+            [binned_aks, binned_weights, binned_pres, binned_pres_edge] = bin_omi_aks(gc_loncorn, gc_latcorn, omi_aks, omi_lon, omi_lat, omi_loncorn, omi_latcorn, omi_pixweight, earth_ellip, omi_pres, omi_pres_edge);
             
             % binned_aks and binned_pres are output in gc_nlat x gc_nlon with
             % the ak vectors in each cell, rearrange so that lon is the first
@@ -206,6 +221,15 @@ parfor d=1:numel(tVec)
                 binned_weights = AK.binned_weights;
             end
             columns(:,:,d) = integrate_domino_profile(gc_no2_data(:,:,:,d), gc_bxhght_data(:,:,:,d), gc_pressure_data(:,:,:,d), gc_ndens_air_data(:,:,:,d), gc_tp_data(:,:,d), binned_aks, binned_pres, binned_pres_edge, binned_weights);
+            tmp_wts = nan(sz_wt(1:2));
+            for i=1:sz_wt(1)
+                for j=1:sz_wt(2)
+                    if ~isempty(binned_weights{i,j})
+                        tmp_wts(i,j) = nansum2(binned_weights{i,j});
+                    end
+                end
+            end
+            total_weights(:,:,d) = tmp_wts;
         end
     else
         E.notimplemented(retrieval)
@@ -220,12 +244,13 @@ end
 
 if ~strcmpi(run_mode,'bin_aks')
     gc_no2.Columns = columns;
+    gc_no2.TotalWeights = total_weights;
 end
 
 end
 
-function saveOmno2(save_path, binned_aks)
-        save(save_path,'binned_aks');
+function saveOmno2(save_path, binned_aks, binned_weights)
+        save(save_path,'binned_aks','binned_weights');
 end
 
 function saveDomino(save_path, binned_aks, binned_pres, binned_pres_edge, binned_weights)
@@ -478,6 +503,7 @@ gc_nlat = size(gc_loncorn,1)-1;
 gc_nlon = size(gc_loncorn,2)-1;
 if strcmpi(retrieval,'omno2')
     aks = nan(size(omi_aks,1), gc_nlat, gc_nlon);
+    weights = cell(gc_nlat, gc_nlon);
 elseif strcmpi(retrieval,'domino')
     aks = cell(gc_nlat, gc_nlon);
     pres = cell(gc_nlat, gc_nlon);
@@ -509,8 +535,10 @@ for a=1:gc_nlat
                 W(:,all(isnan(this_ak),1)) = nan;
                 this_ak_mean = nansum2(this_ak .* W, 2) ./ nansum2(W(1,:),2);
                 aks(:,a,b) = this_ak_mean;
+                weights{a,b} = W(1,:);
             else
                 aks(:,a,b) = nan(size(omi_aks,1),1);
+                weights{a,b} = nan;
             end
         elseif strcmpi(retrieval,'domino')
             % DOMINO AKs are NOT at the same pressure level, therefore when
@@ -534,10 +562,10 @@ for a=1:gc_nlat
 end
 
 varargout{1} = aks;
+varargout{2} = weights;
 if strcmpi(retrieval,'domino')
-    varargout{2} = pres;
-    varargout{3} = pres_edge;
-    varargout{4} = weights;
+    varargout{3} = pres;
+    varargout{4} = pres_edge;
 end
 
 end
