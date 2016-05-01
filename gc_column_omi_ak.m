@@ -83,11 +83,15 @@ if isempty(onCluster)
     onCluster = false;
 end
 
+shareroot = getenv('SYNOMNT');
+
 fprintf('onCluster = %d\n',onCluster);
 
 global omi_he5_dir
 if onCluster && isempty(omi_he5_dir)
     E.runscript_error('omi_he5_dir')
+elseif ~onCluster && ~isempty(shareroot)
+    omi_he5_dir = fullfile(shareroot,'share-sat','SAT','OMI','OMNO2');
 elseif ~onCluster
     omi_he5_dir = '/Volumes/share-sat/SAT/OMI/DOMINOv2.0';
 end
@@ -96,13 +100,16 @@ global run_mode;
 if onCluster && isempty(run_mode)
     E.runscript_error('run_mode');
 elseif ~onCluster;
-    run_mode = 'both';
+    run_mode = 'bin_aks';
     fprintf('Setting run_mode to %s\n',run_mode);
 end
 
 global ak_save_dir;
 if onCluster && isempty(ak_save_dir)
     E.runscript_error('ak_save_dir');
+elseif ~onCluster && ~isempty(shareroot)
+    ak_save_dir = fullfile(shareroot,'share2','USERS','LaughnerJ','MPN_Project','AKs');
+    fprintf('Setting ak_save_dir to %s\n',ak_save_dir);
 elseif ~onCluster
     ak_save_dir = '/Volumes/share2/USERS/LaughnerJ';
     fprintf('Setting ak_save_dir to %s\n',ak_save_dir);
@@ -320,11 +327,15 @@ for a=1:numel(F)
     omi.vcdQualityFlags(omi.vcdQualityFlags==65535)=nan;
     omi.XTrackQualityFlags = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,1,'XTrackQualityFlags')));
     omi.XTrackQualityFlags(omi.XTrackQualityFlags==255) = nan;
+    omi.TerrainReflectivity = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,1,'TerrainReflectivity')));
+    omi.TerrainReflectivity(omi.TerrainReflectivity==-32767) = nan;
+    omi.TerrainReflectivity = omi.TerrainReflectivity * 1e-3;
     omi.Areaweight = ones(size(omi.amf));
     
-    omi = omi_sp_pixel_reject(omi,'geo',0.2,'XTrackFlags');
+    omi = omi_sp_pixel_reject(omi,'geo',0.3,'XTrackFlags');
     
-    rejects = omi.Areaweight == 0;
+    rejects = omi.Areaweight == 0 | isnan(omi.CloudFraction) | isnan(omi.ColumnAmountNO2Trop)...
+        | isnan(omi.TerrainReflectivity) | omi.TerrainReflectivity > 0.3;
     omi.sw(:,rejects) = nan;
     omi.amf(rejects) = nan;
     
