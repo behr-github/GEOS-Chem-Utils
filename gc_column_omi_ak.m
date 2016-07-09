@@ -566,6 +566,7 @@ for a=1:gc_nlat
             this_latcorn = omi_latcorn(:,xx);
             Q = calc_overlap_weight([x1 x2], [y1 y2], this_loncorn, this_latcorn, earth_ellip);
             W = Q .* omi_aw(xx)';
+            W(all(isnan(aks{a,b}),1)) = nan;
             %fprintf('W%d: (%d, %d): Size(Q) = %s, size(W) = %s, size(omi_aw(xx))'' = %s, size(aks{a,b}) = %s\n', t.ID, a, b, mat2str(size(Q)), mat2str(size(W)), mat2str(size(omi_aw(xx)')), mat2str(size(aks{a,b})));
             weights{a,b} = W;
         end
