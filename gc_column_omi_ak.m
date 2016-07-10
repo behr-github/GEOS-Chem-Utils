@@ -158,7 +158,7 @@ end
 
 sz_wt = size(total_weights);
 
-for d=1:numel(tVec)
+parfor d=1:numel(tVec)
     fprintf('Loading OMI files for %s\n',datestr(tVec(d)));
     earth_ellip = referenceEllipsoid('wgs84','kilometer');
     if strcmpi(retrieval,'omno2')
