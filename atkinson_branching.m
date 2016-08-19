@@ -41,7 +41,9 @@ Y = Y300 .* (T ./ 300) .^ -m_inf;
 z = (1 + (log10(X ./ Y)) .^ 2) .^ -1;
 F = 0.411;
 
-ka_kb = ( X ./ (1 + X ./ Y) ) .* F .^ z;
+temp = ( X ./ (1 + X ./ Y) ) .* F .^ z;
+
+ka_kb = temp ./ (1 + temp);
 
 
 end
