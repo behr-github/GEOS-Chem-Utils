@@ -46,6 +46,8 @@ switch plttype
         varargout{1} = grid_omno2d_daily(varargin{:});
     case 'comp2sat'
         [varargout{1}, varargout{2}, varargout{3}, varargout{4}, varargout{5}, varargout{6}] = compare_regions_to_sat(varargin{:});
+    case 'strat_no2'
+        strat_no2_scatter();
     otherwise
         fprintf('Did not recognize plot type\n');
         return
@@ -1259,6 +1261,108 @@ end
             legend(l',{'DOMINO','Base case','Final case','Final case +33%'});
         else
             legend(l',{'Base case','Final case','Final case +33%'});
+        end
+    end
+
+    function strat_no2_scatter()
+        regions = {'sa','saf','na','seas'};
+        dom_stratno2 = cell(size(regions));
+        dom_stratno2(:) = {nan(1,366)};
+        dom_stratno2_sd = cell(size(regions));
+        dom_stratno2_sd(:) = {nan(1,366)};
+        sp_stratno2 = cell(size(regions));
+        sp_stratno2(:) = {nan(1,366)};
+        sp_stratno2_sd = cell(size(regions));
+        sp_stratno2_sd(:) = {nan(1,366)};
+        
+        dom_dir = '';
+        dom_pattern = 'OMI-Aura_L2-OMDOMINO_%04dm%02d%02d';
+        sp_dir = '';
+        sp_pattern = 'OMI-Aura_L2-OMNO2_%04dm%02d%02d';
+        
+        dvec = datenum('2012-01-01'):datenum('2012-12-31');
+        [~,~,nh_tt] = define_regions('naf');
+        [~,~,sh_tt] = define_regions('saf');
+        either_tt = nh_tt | sh_tt;
+        for d=1:numel(dvec)
+            % Skip if this day isn't used in either hemisphere
+            if ~either_tt(d)
+                continue
+            end
+            fprintf('Working on %s\n', datestr(dvec(d)));
+            % Find files for this day
+            dom_fpat = fullfile(dom_dir,sprintf('%02d',month(dvec(d))), sprintf(dom_pattern, year(dvec(d)), month(dvec(d)), day(dvec(d))));
+            dom_files = dir(dom_fpat);
+            sp_fpat = fullfile(dom_dir, sprintf('%02d',month(dvec(d))), sprintf(sp_pattern, year(dvec(d)), month(dvec(d)), day(dvec(d))));
+            sp_files = dir(sp_fpat);
+            if numel(dom_files) ~= numel(sp_files)
+                error('Different number of domino and sp files')
+            end
+            
+            dom_day_no2 = cell(size(regions));
+            sp_day_no2 = cell(size(regions));
+            
+            for a=1:numel(dom_files)
+                % Load arrays
+                dom = fullfile(dom_dir, sprintf('%02d',month(dvec(d))), dom_files(a).name);
+                dom_stratno2_a = h5readomi(dom.Filename, h5dsetname(dom,1,2,1,1,'AssimilatedStratosphericVerticalColumn'));
+                dom_cld_a = h5readomi(dom.Filename, h5dsetname(dom,1,2,1,1,'CloudFraction'));
+                dom_alb_a = h5readomi(dom.Filename, h5dsetname(dom,1,2,1,1,'SurfaceAlbedo'));
+                dom_flags_a = h5readomi(dom.Filename, h5dsetname(dom,1,2,1,1,'TroposphericColumnFlag'));
+                dom_stratno2_a(dom_cld_a > 0.3 | dom_alb_a > 0.3 | dom_flags_a < 0)=nan;
+                dom_lon = h5read(dom.Filename, h5dsetname(dom,1,2,1,2,'Longitude'));
+                dom_lat = h5read(dom.Filename, h5dsetname(dom,1,2,1,2,'Latitude'));
+                
+                sp = fullfile(sp_dir, sprintf('%02d',month(dvec(d))), sp_files(a).name);
+                sp_stratno2_a = h5readomi(sp.Filename, h5dsetname(sp,1,2,1,1,'ColumnAmountNO2Strat'));
+                sp_cld_a = h5readomi(sp.Filename, h5dsetname(sp,1,2,1,1,'CloudFraction'));
+                sp_alb_a = h5readomi(sp.Filename, h5dsetname(sp,1,2,1,1,'TerrainReflectivity'));
+                sp_xtrack_a = h5readomi(sp.Filename, h5dsetname(sp,1,2,1,1,'XTrackQualityFlags'));
+                sp_vcdflags_a = h5readomi(sp.Filename, h5dsetname(sp,1,2,1,1,'VcdQualityFlags'));
+                sp_stratno2_a(sp_cld_a > 0.3 | sp_alb_a > 0.3 | mod(sp_xtrack_a, 2) ~= 0 | mod(sp_vcdflags_a,2) ~= 0) = nan;
+                sp_lon = h5read(sp.Filename, h5dsetname(sp,1,2,1,2,'Longitude'));
+                sp_lat = h5read(sp.Filename, h5dsetname(sp,1,2,1,2,'Latitude'));
+                
+                % Make a list of pixels that fall in each region
+                
+                for b=1:numel(regions)
+                    [lonlim, latlim, timeind] = define_regions(regions{b});
+                    % Skip this region if outside it's time period
+                    if ~timeind(d)
+                        continue
+                    end
+                    
+                    xx = dom_lon >= lonlim(1) & dom_lon <= lonlim(2) & dom_lat >= latlim(1) & dom_lat <= latlim(2);
+                    if sum(xx) > 0
+                        dom_day_no2{b} = cat(1, dom_day_no2{b}, dom_stratno2_a(xx));
+                    end
+                    xx = sp_lon >= lonlim(1) & sp_lon <= lonlim(2) & sp_lat >= latlim(1) & sp_lat <= latlim(2);
+                    if sum(xx) > 0
+                        sp_day_no2{b} = cat(1, sp_day_no2{b}, sp_stratno2_a(xx));
+                    end
+                end
+            end
+            
+            for b=1:numel(regions)
+                if ~isempty(dom_day_no2)
+                    dom_stratno2{b}(d) = nanmean(dom_day_no2{b});
+                    dom_stratno2_sd{b}(d) = nanstd(dom_day_no2{b});
+                end
+                if ~isempty(sp_day_no2)
+                    sp_stratno2{b}(d) = nanmean(sp_day_no2{b});
+                    sp_stratno2_sd{b}(d) = nanstd(sp_day_no2{b});
+                end
+            end
+        end
+        
+        for b=1:numel(regions)
+            figure;
+            title(regions{b});
+            line(dom_stratno2{b}, sp_stratno2{b}, 'color', 'k', 'marker', 'o', 'linestyle', 'none');
+            scatter_errorbars(dom_stratno2{b}, sp_stratno2{b}, dom_stratno2_sd{b}, 'direction', 'x');
+            scatter_errorbars(dom_stratno2{b}, sp_stratno2{b}, sp_stratno2_sd{b}, 'direction', 'y');
+            xlabel('DOMINO strat NO2')
+            ylabel('SP strat NO2')
         end
     end
 end
