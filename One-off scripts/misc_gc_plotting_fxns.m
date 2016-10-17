@@ -8,6 +8,7 @@ function [ varargout ] = misc_gc_plotting_fxns( plttype, varargin )
 
 DEBUG_LEVEL = 2;
 E = JLLErrors;
+HOMEDIR = getenv('HOME');
 
 plttype = lower(plttype);
 switch plttype
@@ -44,6 +45,10 @@ switch plttype
         [varargout{1}, varargout{2}] = grid_omno2d_monthly(varargin{:});
     case 'grid_day_omno2'
         varargout{1} = grid_omno2d_daily(varargin{:});
+    case 'dc3-diff'
+        compare_cases_during_DC3();
+    case 'wt-check'
+        [varargout{1}, varargout{2}, varargout{3}, varargout{4}] = check_ak_vcd_domino_weights();
     case 'comp2sat'
         [varargout{1}, varargout{2}, varargout{3}, varargout{4}, varargout{5}, varargout{6}] = compare_regions_to_sat(varargin{:});
     case 'strat_no2'
@@ -1009,6 +1014,132 @@ end
        avg_table = table(AbsoluteDifference, RelativeDifference, 'RowNames', regions);
     end
 
+    function compare_cases_during_DC3
+        newcase = ask_multichoice('Which case to use as the new case?',{'MPN','PNA','N2O5','HNO3','Updated'},'list',true);
+        plotquant = ask_multichoice('Which quantity to plot the difference for?',{'NO2-tVCDs','UT-NOx','UT-HNO3'},'list',true);
+        
+        base_path = fullfile(HOMEDIR,'Documents','MATLAB','MPN Project','Workspaces','Pickering Parameterization','DailyDC3');
+        base_case_path = fullfile(base_path ,'JPLnoMPN-p0');
+        switch lower(newcase)
+            case 'mpn'
+                new_case_path = fullfile(base_path, 'JPLwMPN-p0');
+            case 'pna'
+                new_case_path = fullfile(base_path, 'JPLnoMPN-PNA-p0');
+            case 'n2o5'
+                new_case_path = fullfile(base_path, 'JPLnoMPN-N2O5-p0');
+            case 'hno3'
+                new_case_path = fullfile(base_path, 'HendwoMPN-p0');
+            case 'updated'
+                new_case_path = fullfile(base_path, 'HendwMPN-PNA-N2O5-p0');
+        end
+        
+        % Load the NOx or HNO3 from both the old and new cases, along with
+        % the pressure levels. Cut down to the region and time frame
+        % desired, then restrict to 200-350 hPa.
+        [xx,yy] = region_xxyy('na');
+        dnumlims = [datenum('2012-05-01'), datenum('2012-06-29')];
+        if ~isempty(regexpi(plotquant, 'tVCD'))
+            % need to load from the OMI overpass instead
+            E.notimplemented('tVCD')
+        elseif ~isempty(regexpi(plotquant,'NOx'));
+            [baseData, baseTVec] = loadNOx(base_case_path);
+            [newData, newTVec] = loadNOx(new_case_path);
+        elseif ~isempty(regexpi(plotquant,'HNO3'))
+            [baseData, baseTVec] = loadGCVar(base_case_path,'.*HNO3.mat');
+            [newData, newTVec] = loadGCVar(new_case_path, '.*HNO3.mat');
+        end
+        
+        basePres = loadGCVar(base_case_path, '.*PSURF.mat');
+        newPres = loadGCVar(new_case_path, '.*PSURF.mat');
+    
+        ttnew = newTVec >= dnumlims(1) & newTVec <= dnumlims(2);
+        newData = newData(xx,yy,:,ttnew);
+        newPres = newPres(xx,yy,:,ttnew);
+        newData(newPres < 200 | newPres > 350) = nan;
+        ttbase = baseTVec >= dnumlims(1) & baseTVec <= dnumlims(2);
+        baseData = baseData(xx,yy,:,ttbase);
+        basePres = basePres(xx,yy,:,ttbase);
+        baseData(basePres < 200 | basePres > 350) = nan;
+        
+        del = newData - baseData;
+        del = nanmean(nanmean(del,4),3);
+        
+        [glon, glat] = geos_chem_centers('2x25');
+        [GLAT, GLON] = meshgrid(glat(yy),glon(xx));
+        
+        coastlines = load('coast');
+        
+        figure; pcolor(GLON,GLAT,del);
+        colormap('jet')
+        colorbar
+        line(coastlines.long, coastlines.lat, 'color', 'k');
+        title(sprintf('%s - base: %s',newcase,plotquant))
+    end
+    function [NOx, tvec] = loadNOx(file_path)
+        [NO2, tvec] = loadGCVar(file_path,'.*NO2[-_]IJAVG.mat');
+        
+        NO = loadGCVar(file_path,'.*NO[-_]IJAVG.mat');
+        
+        NOx = NO + NO2;
+    end
+    function [var, tvec] = loadGCVar(directory, pattern)
+        F = dir(fullfile(directory,'*.mat'));
+        names = glob({F.name},pattern);
+        if numel(names) ~= 1
+            error('loadGCVars:multiple_files','Multiple files match the pattern %s', pattern);
+        end
+        filename = fullfile(directory, names{1});
+        tmp = load(filename); % there should only be one file matching that pattern
+        fn = fieldnames(tmp);
+        fn = fn{1};
+        var = tmp.(fn).dataBlock;
+        tvec = tmp.(fn).tVec;
+    end
+
+    function [sa_wt_del, sa_wt_rdel, saf_wt_del, saf_wt_rdel] = check_ak_vcd_domino_weights()
+        % Some of the DOMINO AK weights are ~10% lower that the satellite
+        % VCD weights. This will give a rough estimate of how much of an
+        % effect that would cause.
+        
+        % Load the AK weight test files that we have
+        ak_path = '/Volumes/share2/USERS/LaughnerJ/MPN_Project/AKs/AKs-wttest/DOMINO';
+        F_ak = dir(fullfile(ak_path, '*.mat'));
+        start_dnum = datenum(regexp(F_ak(1).name,'\d\d\d\d\d\d\d\d','match','once'),'yyyymmdd');
+        end_dnum = datenum(regexp(F_ak(end).name,'\d\d\d\d\d\d\d\d','match','once'),'yyyymmdd');
+        total_weights = nan(144, 91, numel(F_ak));
+        for f=1:numel(F_ak)
+            AK = load(fullfile(ak_path, F_ak(f).name));
+            for a=1:size(total_weights,1)
+                for b=1:size(total_weights,2)
+                    wt =  nansum2(AK.binned_weights{a,b});
+                    if ~isempty(wt)
+                        total_weights(a,b,f) = wt;
+                    end
+                end
+            end
+        end
+        
+        sat_weights = nan(size(total_weights));
+        % Now load the corresponding satellite files
+        filepat = 'OMI_DOMINO_%04d%02d%02d-newweight.mat';
+        sat_path = '/Volumes/share2/USERS/LaughnerJ/DOMINO-OMNO2_comparision/DOMINO/2.5x2.0-avg-newweight';
+        datevec=start_dnum:end_dnum;
+        for a=1:numel(datevec)
+            filename = sprintf(filepat, year(datevec(a)), month(datevec(a)), day(datevec(a)));
+            sat = load(fullfile(sat_path, filename));
+            sat_weights(:,:,a) = sat.GC_avg.Weight;
+        end
+        
+        % Since we only have January outputs, just compare the two southern
+        % hemisphere regions
+        [xx,yy] = region_xxyy('sa');
+        sa_wt_del = total_weights(xx,yy,:) - sat_weights(xx,yy,:);
+        sa_wt_rdel = reldiff(total_weights(xx,yy,:), sat_weights(xx,yy,:));
+        [xx,yy] = region_xxyy('saf');
+        saf_wt_del = total_weights(xx,yy,:) - sat_weights(xx,yy,:);
+        saf_wt_rdel = reldiff(total_weights(xx,yy,:), sat_weights(xx,yy,:));
+    end
+
     function [omno2_no2, omno2_std, domino_no2, domino_std, omno2_gc, domino_gc] = compare_regions_to_sat(varargin)
         % Will generate the (hopefully) final figure for Ben and my paper.
         % The current idea I have is to make two panels, one for OMNO2 one
@@ -1040,8 +1171,8 @@ end
         % Then load the satellite data and average it down for each
         % regions.
         
-        omno2_path = '/Volumes/share2/USERS/LaughnerJ/DOMINO-OMNO2_comparision/OMNO2/2.5x2.0-avg-newweight';
-        domino_path = '/Volumes/share2/USERS/LaughnerJ/DOMINO-OMNO2_comparision/DOMINO/2.5x2.0-avg-newweight';
+        omno2_path = '/Volumes/share2/USERS/LaughnerJ/DOMINO-OMNO2_comparision/OMNO2/2.5x2.0-avg-newweight-allvcd';
+        domino_path = '/Volumes/share2/USERS/LaughnerJ/DOMINO-OMNO2_comparision/DOMINO/2.5x2.0-avg-newweight-allvcd';
         
         fprintf('Loading OMNO2 data... Please be patient...   ');
         F_omno2 = dir(fullfile(omno2_path,'OMI*.mat'));
@@ -1123,10 +1254,10 @@ end
         
         % Now load each of the 3 cases from GEOS-Chem for each of the
         % products' AKs and get the same regions.
-        gc_path = '/Users/Josh/Documents/MATLAB/MPN Project/Workspaces/Pickering Parameterization/DailyOMI/AllAKsDaily-newweight';
+        gc_path = '/Users/Josh/Documents/MATLAB/MPN Project/Workspaces/Pickering Parameterization/DailyOMI/AllAKsDaily-newweight-allvcd';
         chems = {'JPLnoMPN','HendwMPN-PNA-N2O5','HendwMPN-PNA-N2O5'};
-        omno2_ak_files = {'JPLnoMPN-Pickp0-OMI_NO2_OMNO2_aks_newweight.mat','HendwMPN-PNA-N2O5-Pickp0-OMI_NO2_OMNO2_aks_newweight.mat','HendwMPN-PNA-N2O5-Pickp33-OMI_NO2_OMNO2_aks_newweight.mat'};
-        dom_ak_files = {'JPLnoMPN-Pickp0-OMI_NO2_DOMINO_aks_newweight.mat','HendwMPN-PNA-N2O5-Pickp0-OMI_NO2_DOMINO_aks_newweight.mat','HendwMPN-PNA-N2O5-Pickp33-OMI_NO2_DOMINO_aks_newweight.mat'};
+        omno2_ak_files = {'JPLnoMPN-Pickp0-OMI_NO2_OMNO2_aks_newweight_allvcd.mat','HendwMPN-PNA-N2O5-Pickp0-OMI_NO2_OMNO2_aks_newweight_allvcd.mat','HendwMPN-PNA-N2O5-Pickp33-OMI_NO2_OMNO2_aks_newweight_allvcd.mat'};
+        dom_ak_files = {'JPLnoMPN-Pickp0-OMI_NO2_DOMINO_aks_newweight_allvcd.mat','HendwMPN-PNA-N2O5-Pickp0-OMI_NO2_DOMINO_aks_newweight_allvcd.mat','HendwMPN-PNA-N2O5-Pickp33-OMI_NO2_DOMINO_aks_newweight_allvcd.mat'};
         fields = {'Base','Final','Final33'};
         gc_data = make_empty_struct_from_cell(fields);
         omno2_gc = make_empty_struct_from_cell(regions,gc_data);
@@ -1191,8 +1322,8 @@ end
         figure; 
         subplot(2,1,1)
         
-        cols = {'r','b',[0 0.5 0]};
-        marks = {'x','^','s'};
+        cols = {[0.5 0.5 0.5],'b','r'};
+        marks = {'d','^','s'};
         
         for r=1:numel(regions)
             x = (r-1)*2+1;
@@ -1206,8 +1337,8 @@ end
                 end
             else
                 % Plot upper and lower limits
-                ul = omno2_no2.(regions{r}) + omno2_std.(regions{r})/sqrtn_o;
-                ll = omno2_no2.(regions{r}) - omno2_std.(regions{r})/sqrtn_o;
+                ul = 1 + omno2_no2.(regions{r})/(omno2_std.(regions{r})/sqrtn_o);
+                ll = 1 - omno2_no2.(regions{r})/(omno2_std.(regions{r})/sqrtn_o);
                 line(x + [-0.5, 0.5], [ul ul], 'color', 'k', 'linewidth', 2, 'linestyle', '--');
                 line(x + [-0.5, 0.5], [ll ll], 'color', 'k', 'linewidth', 2, 'linestyle', '--');
                 % The the ratio of each model case to the satellite
@@ -1241,8 +1372,8 @@ end
                 end
             else
                 % Plot upper and lower limits
-                ul = domino_no2.(regions{r}) + domino_std.(regions{r})/sqrtn_d;
-                ll = domino_no2.(regions{r}) - domino_std.(regions{r})/sqrtn_d;
+                ul = 1 + domino_no2.(regions{r})/(domino_std.(regions{r})/sqrtn_d);
+                ll = 1 - domino_no2.(regions{r})/(domino_std.(regions{r})/sqrtn_d);
                 line(x + [-0.5, 0.5], [ul ul], 'color', 'k', 'linewidth', 2, 'linestyle', '--');
                 line(x + [-0.5, 0.5], [ll ll], 'color', 'k', 'linewidth', 2, 'linestyle', '--');
                 % The the ratio of each model case to the satellite

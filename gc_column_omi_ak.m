@@ -206,8 +206,8 @@ parfor d=1:numel(tVec)
         if ismember(run_mode, {'bin_aks','both'})
             [omi_aks, omi_pres, omi_pres_edge, omi_lon, omi_lat, omi_loncorn, omi_latcorn] = load_domino_files(year(tVec(d)), month(tVec(d)), day(tVec(d)), omi_he5_dir);
             omi_pixweight = calc_pix_areaweight(omi_loncorn, omi_latcorn);
-            fprintf('Binnind OMI AKs for %s\n',datestr(tVec(d)));
-            [binned_aks, binned_weights, binned_pres, binned_pres_edge] = bin_omi_aks(gc_loncorn, gc_latcorn, omi_aks, omi_lon, omi_lat, omi_loncorn, omi_latcorn, omi_pixweight, earth_ellip, omi_pres, omi_pres_edge);
+            fprintf('Binning OMI AKs for %s\n',datestr(tVec(d)));
+            [binned_aks, binned_weights, binned_pres, binned_pres_edge, DB] = bin_omi_aks(gc_loncorn, gc_latcorn, omi_aks, omi_lon, omi_lat, omi_loncorn, omi_latcorn, omi_pixweight, earth_ellip, omi_pres, omi_pres_edge);
             
             % binned_aks and binned_pres are output in gc_nlat x gc_nlon with
             % the ak vectors in each cell, rearrange so that lon is the first
@@ -425,11 +425,14 @@ for a=1:numel(F)
     end
     
     % These are fields needed to reject pixels
-    omi.CloudFraction = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,1,'CloudFraction')))*1e-3;
+    cldScaleFactor = double(h5readatt(hi.Filename, h5dsetname(hi,1,2,1,1,'CloudFraction'),'ScaleFactor'));
+    omi.CloudFraction = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,1,'CloudFraction')))*cldScaleFactor;
     omi.CloudFraction(omi.CloudFraction<0) = nan;
-    omi.ColumnAmountNO2Trop = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,1,'TroposphericVerticalColumn')))*1e15;
+    vcdScaleFactor = double(h5readatt(hi.Filename, h5dsetname(hi,1,2,1,1,'TroposphericVerticalColumn'),'ScaleFactor'));
+    omi.ColumnAmountNO2Trop = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,1,'TroposphericVerticalColumn')))*vcdScaleFactor;
     omi.TropColumnFlag = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,1,'TroposphericColumnFlag')));
-    omi.Albedo = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,1,'SurfaceAlbedo')))*1e-4;
+    albScaleFactor = double(h5readatt(hi.Filename, h5dsetname(hi,1,2,1,1,'SurfaceAlbedo'),'ScaleFactor'));
+    omi.Albedo = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,1,'SurfaceAlbedo')))*albScaleFactor;
     
     bad_vals = omi.CloudFraction > 0.3 | omi.ColumnAmountNO2Trop < 0 | omi.TropColumnFlag < 0 | omi.Albedo > 0.3;
     omi.aks(:,bad_vals) = nan;
@@ -566,8 +569,18 @@ for a=1:gc_nlat
             this_latcorn = omi_latcorn(:,xx);
             Q = calc_overlap_weight([x1 x2], [y1 y2], this_loncorn, this_latcorn, earth_ellip);
             W = Q .* omi_aw(xx)';
+            W(all(isnan(aks{a,b}),1)) = nan;
             %fprintf('W%d: (%d, %d): Size(Q) = %s, size(W) = %s, size(omi_aw(xx))'' = %s, size(aks{a,b}) = %s\n', t.ID, a, b, mat2str(size(Q)), mat2str(size(W)), mat2str(size(omi_aw(xx)')), mat2str(size(aks{a,b})));
             weights{a,b} = W;
+            if b == 102 && a == 41
+                DB.Q = Q;
+                DB.AW = omi_aw(xx)';
+                DB.W = W;
+                DB.omilon = omi_lon(xx)';
+                DB.omilat = omi_lat(xx)';
+                DB.gclon = [x1, x2];
+                DB.gclat = [y1, y2];
+            end
         end
     end
 end
@@ -577,6 +590,7 @@ varargout{2} = weights;
 if strcmpi(retrieval,'domino')
     varargout{3} = pres;
     varargout{4} = pres_edge;
+    varargout{5} = DB;
 end
 
 end
@@ -819,6 +833,10 @@ for a=1:sz(1)
                 % over each box's partial column weighted by AK (after appropriate unit
                 % conversions)
                 omi_no2_columns(p) = nansum2((omi_no2_p * 1e-9) .* (omi_ndens_air_p * 1e-6) .* (omi_bxhght_p * 100) .* omi_aks(:,p));
+
+                if xor(all(isnan(omi_aks(:,p))), omi_weights(p) == 0 || isnan(omi_weights(p)))
+                    warning('For a = %d, b = %d, t = %d, p = %d, the AK is all NaNs but the weight is positive or vice versa',a,b,t,p)
+                end
             end
             %fprintf('W%d: (%d,%d): Size omi_no2_columns = %s, Size omi_weights = %s, size omi_aks = %s\n',tstr.ID,a,b,mat2str(size(omi_no2_columns)),mat2str(size(omi_weights)), mat2str(size(omi_aks)));
             no2_columns(a,b,t) = nansum2(omi_no2_columns .* omi_weights)./nansum2(omi_weights);
