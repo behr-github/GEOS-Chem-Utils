@@ -52,7 +52,9 @@ switch plttype
     case 'comp2sat'
         [varargout{1}, varargout{2}, varargout{3}, varargout{4}, varargout{5}, varargout{6}] = compare_regions_to_sat(varargin{:});
     case 'strat_no2'
-        strat_no2_scatter();
+        domino_sp_scatter();
+    case 'compare-aks'
+        compare_ak_vec();
     otherwise
         fprintf('Did not recognize plot type\n');
         return
@@ -1322,7 +1324,7 @@ end
         figure; 
         subplot(2,1,1)
         
-        cols = {[0.5 0.5 0.5],'b','r'};
+        cols = {'k','b','r'};
         marks = {'d','^','s'};
         
         for r=1:numel(regions)
@@ -1337,14 +1339,29 @@ end
                 end
             else
                 % Plot upper and lower limits
-                ul = 1 + omno2_no2.(regions{r})/(omno2_std.(regions{r})/sqrtn_o);
-                ll = 1 - omno2_no2.(regions{r})/(omno2_std.(regions{r})/sqrtn_o);
-                line(x + [-0.5, 0.5], [ul ul], 'color', 'k', 'linewidth', 2, 'linestyle', '--');
-                line(x + [-0.5, 0.5], [ll ll], 'color', 'k', 'linewidth', 2, 'linestyle', '--');
+%                 ul = 1 + omno2_no2.(regions{r})/(omno2_std.(regions{r})/sqrtn_o);
+%                 ll = 1 - omno2_no2.(regions{r})/(omno2_std.(regions{r})/sqrtn_o);
+%                 line(x + [-0.5, 0.5], [ul ul], 'color', 'k', 'linewidth', 2, 'linestyle', '--');
+%                 line(x + [-0.5, 0.5], [ll ll], 'color', 'k', 'linewidth', 2, 'linestyle', '--');
                 % The the ratio of each model case to the satellite
                 for a=1:numel(fields)
                     dx = a*0.5 - 1;
-                    l(a) = line(x+dx, omno2_gc.(regions{r}).(fields{a}).mean / omno2_no2.(regions{r}),'color',cols{a},'marker',marks{a}, 'linestyle','none', 'linewidth', 2);
+                    mod_sat_ratio = omno2_gc.(regions{r}).(fields{a}).mean / omno2_no2.(regions{r});
+                    l(a) = line(x+dx, mod_sat_ratio, 'color',cols{a},'marker',marks{a}, 'linestyle','none', 'linewidth', 2);
+                    
+                    % Uncertainty propagation for f = x/y => 
+                    % s_f^2 = s_m^2/y^2 + s_y^2 * m^2/y^4. Here m is the
+                    % model values and y the satellite values.
+                    m = omno2_gc.(regions{r}).(fields{a}).mean;
+                    s_m = omno2_gc.(regions{r}).(fields{a}).std / sqrtn_o;
+                    y = omno2_no2.(regions{r});
+                    s_y = omno2_std.(regions{r}) / sqrtn_o;
+                    s_f = (s_m.^2)/(y.^2) + (m.^2)./(y.^4).*s_y;
+                    scatter_errorbars(x+dx, mod_sat_ratio, s_f, 'color', cols{a}, 'linewidth', 2);
+                    
+                    % This commented out line was just to see how much
+                    % difference the AKs made
+                    %l(a) = line(x+dx, domino_gc.(regions{r}).(fields{a}).mean / omno2_no2.(regions{r}),'color',cols{a},'marker',marks{a}, 'linestyle','none', 'linewidth', 2);
                 end
             end
         end
@@ -1372,14 +1389,25 @@ end
                 end
             else
                 % Plot upper and lower limits
-                ul = 1 + domino_no2.(regions{r})/(domino_std.(regions{r})/sqrtn_d);
-                ll = 1 - domino_no2.(regions{r})/(domino_std.(regions{r})/sqrtn_d);
-                line(x + [-0.5, 0.5], [ul ul], 'color', 'k', 'linewidth', 2, 'linestyle', '--');
-                line(x + [-0.5, 0.5], [ll ll], 'color', 'k', 'linewidth', 2, 'linestyle', '--');
+%                 ul = 1 + domino_no2.(regions{r})/(domino_std.(regions{r})/sqrtn_d);
+%                 ll = 1 - domino_no2.(regions{r})/(domino_std.(regions{r})/sqrtn_d);
+%                 line(x + [-0.5, 0.5], [ul ul], 'color', 'k', 'linewidth', 2, 'linestyle', '--');
+%                 line(x + [-0.5, 0.5], [ll ll], 'color', 'k', 'linewidth', 2, 'linestyle', '--');
                 % The the ratio of each model case to the satellite
                 for a=1:numel(fields)
                     dx = a*0.5 - 1;
-                    l(a) = line(x+dx, domino_gc.(regions{r}).(fields{a}).mean / domino_no2.(regions{r}),'color',cols{a},'marker',marks{a}, 'linestyle','none', 'linewidth', 2);
+                    mod_sat_ratio = domino_gc.(regions{r}).(fields{a}).mean / domino_no2.(regions{r});
+                    l(a) = line(x+dx, mod_sat_ratio, 'color',cols{a},'marker',marks{a}, 'linestyle','none', 'linewidth', 2);
+                    
+                    % Uncertainty propagation for f = x/y => 
+                    % s_f^2 = s_m^2/y^2 + s_y^2 * m^2/y^4. Here m is the
+                    % model values and y the satellite values.
+                    m = domino_gc.(regions{r}).(fields{a}).mean;
+                    s_m = domino_gc.(regions{r}).(fields{a}).std / sqrtn_d;
+                    y = domino_no2.(regions{r});
+                    s_y = domino_std.(regions{r}) / sqrtn_d;
+                    s_f = (s_m.^2)/(y.^2) + (m.^2)./(y.^4).*s_y;
+                    scatter_errorbars(x+dx, mod_sat_ratio, s_f, 'color', cols{a}, 'linewidth', 2);
                 end
             end
         end
@@ -1395,21 +1423,36 @@ end
         end
     end
 
-    function strat_no2_scatter()
-        regions = {'sa','saf','na','seas'};
-        dom_stratno2 = cell(size(regions));
-        dom_stratno2(:) = {nan(1,366)};
-        dom_stratno2_sd = cell(size(regions));
-        dom_stratno2_sd(:) = {nan(1,366)};
-        sp_stratno2 = cell(size(regions));
-        sp_stratno2(:) = {nan(1,366)};
-        sp_stratno2_sd = cell(size(regions));
-        sp_stratno2_sd(:) = {nan(1,366)};
+    function domino_sp_scatter()
+        quantity = ask_multichoice('What would you like to compare?', {'Strat NO2','Trop AMFs','Trop VCDs','SCDs'}, 'list', true);
+        switch lower(quantity)
+            case 'strat no2'
+                dom_field = 'AssimilatedStratosphericVerticalColumn';
+                sp_field = 'ColumnAmountNO2Strat';
+            case 'trop amfs'
+                dom_field = 'AirMassFactorTropospheric';
+                sp_field = 'AmfTrop';
+            case 'trop vcds'
+                dom_field = 'TroposphericVerticalColumn';
+                sp_field = 'ColumnAmountNO2Trop';
+            case 'scds'
+                dom_field = 'SlantColumnAmountNO2';
+                sp_field = 'SlantColumnAmountNO2';
+        end
+        regions = {'sa','saf','naf','seas'};
+        dom_val = cell(size(regions));
+        dom_val(:) = {nan(1,366)};
+        dom_val_sd = cell(size(regions));
+        dom_val_sd(:) = {nan(1,366)};
+        sp_val = cell(size(regions));
+        sp_val(:) = {nan(1,366)};
+        sp_val_sd = cell(size(regions));
+        sp_val_sd(:) = {nan(1,366)};
         
-        dom_dir = '';
-        dom_pattern = 'OMI-Aura_L2-OMDOMINO_%04dm%02d%02d';
-        sp_dir = '';
-        sp_pattern = 'OMI-Aura_L2-OMNO2_%04dm%02d%02d';
+        dom_dir = '/Volumes/share-sat/SAT/OMI/DOMINOv2.0/2012';
+        dom_pattern = 'OMI-Aura_L2-OMDOMINO_%04dm%02d%02d*';
+        sp_dir = '/Volumes/share-sat/SAT/OMI/OMNO2/2012';
+        sp_pattern = 'OMI-Aura_L2-OMNO2_%04dm%02d%02d*';
         
         dvec = datenum('2012-01-01'):datenum('2012-12-31');
         [~,~,nh_tt] = define_regions('naf');
@@ -1424,35 +1467,23 @@ end
             % Find files for this day
             dom_fpat = fullfile(dom_dir,sprintf('%02d',month(dvec(d))), sprintf(dom_pattern, year(dvec(d)), month(dvec(d)), day(dvec(d))));
             dom_files = dir(dom_fpat);
-            sp_fpat = fullfile(dom_dir, sprintf('%02d',month(dvec(d))), sprintf(sp_pattern, year(dvec(d)), month(dvec(d)), day(dvec(d))));
+            sp_fpat = fullfile(sp_dir, sprintf('%02d',month(dvec(d))), sprintf(sp_pattern, year(dvec(d)), month(dvec(d)), day(dvec(d))));
             sp_files = dir(sp_fpat);
-            if numel(dom_files) ~= numel(sp_files)
-                error('Different number of domino and sp files')
-            end
             
             dom_day_no2 = cell(size(regions));
             sp_day_no2 = cell(size(regions));
             
             for a=1:numel(dom_files)
                 % Load arrays
-                dom = fullfile(dom_dir, sprintf('%02d',month(dvec(d))), dom_files(a).name);
-                dom_stratno2_a = h5readomi(dom.Filename, h5dsetname(dom,1,2,1,1,'AssimilatedStratosphericVerticalColumn'));
+                dom = h5info(fullfile(dom_dir, sprintf('%02d',month(dvec(d))), dom_files(a).name));
+                dom_stratno2_a = h5readomi(dom.Filename, h5dsetname(dom,1,2,1,1,dom_field));
                 dom_cld_a = h5readomi(dom.Filename, h5dsetname(dom,1,2,1,1,'CloudFraction'));
                 dom_alb_a = h5readomi(dom.Filename, h5dsetname(dom,1,2,1,1,'SurfaceAlbedo'));
                 dom_flags_a = h5readomi(dom.Filename, h5dsetname(dom,1,2,1,1,'TroposphericColumnFlag'));
-                dom_stratno2_a(dom_cld_a > 0.3 | dom_alb_a > 0.3 | dom_flags_a < 0)=nan;
+                %dom_stratno2_a(dom_cld_a > 0.3 | dom_alb_a > 0.3 | dom_flags_a < 0)=nan;
+                dom_stratno2_a(dom_flags_a < 0)=nan;
                 dom_lon = h5read(dom.Filename, h5dsetname(dom,1,2,1,2,'Longitude'));
                 dom_lat = h5read(dom.Filename, h5dsetname(dom,1,2,1,2,'Latitude'));
-                
-                sp = fullfile(sp_dir, sprintf('%02d',month(dvec(d))), sp_files(a).name);
-                sp_stratno2_a = h5readomi(sp.Filename, h5dsetname(sp,1,2,1,1,'ColumnAmountNO2Strat'));
-                sp_cld_a = h5readomi(sp.Filename, h5dsetname(sp,1,2,1,1,'CloudFraction'));
-                sp_alb_a = h5readomi(sp.Filename, h5dsetname(sp,1,2,1,1,'TerrainReflectivity'));
-                sp_xtrack_a = h5readomi(sp.Filename, h5dsetname(sp,1,2,1,1,'XTrackQualityFlags'));
-                sp_vcdflags_a = h5readomi(sp.Filename, h5dsetname(sp,1,2,1,1,'VcdQualityFlags'));
-                sp_stratno2_a(sp_cld_a > 0.3 | sp_alb_a > 0.3 | mod(sp_xtrack_a, 2) ~= 0 | mod(sp_vcdflags_a,2) ~= 0) = nan;
-                sp_lon = h5read(sp.Filename, h5dsetname(sp,1,2,1,2,'Longitude'));
-                sp_lat = h5read(sp.Filename, h5dsetname(sp,1,2,1,2,'Latitude'));
                 
                 % Make a list of pixels that fall in each region
                 
@@ -1464,11 +1495,35 @@ end
                     end
                     
                     xx = dom_lon >= lonlim(1) & dom_lon <= lonlim(2) & dom_lat >= latlim(1) & dom_lat <= latlim(2);
-                    if sum(xx) > 0
+                    %fprintf('DOMINO b=%d, sum(xx) = %d\n',b,sum(xx(:)));
+                    if sum(xx(:)) > 0
                         dom_day_no2{b} = cat(1, dom_day_no2{b}, dom_stratno2_a(xx));
                     end
+                end
+            end
+
+            for a=1:numel(sp_files)
+                sp = h5info(fullfile(sp_dir, sprintf('%02d',month(dvec(d))), sp_files(a).name));
+                sp_stratno2_a = h5readomi(sp.Filename, h5dsetname(sp,1,2,1,1,sp_field));
+                sp_cld_a = h5readomi(sp.Filename, h5dsetname(sp,1,2,1,1,'CloudFraction'));
+                sp_alb_a = h5readomi(sp.Filename, h5dsetname(sp,1,2,1,1,'TerrainReflectivity'));
+                sp_xtrack_a = h5readomi(sp.Filename, h5dsetname(sp,1,2,1,1,'XTrackQualityFlags'));
+                sp_vcdflags_a = h5readomi(sp.Filename, h5dsetname(sp,1,2,1,1,'VcdQualityFlags'));
+                %sp_stratno2_a(sp_cld_a > 0.3 | sp_alb_a > 0.3 | mod(sp_xtrack_a, 2) ~= 0 | mod(sp_vcdflags_a,2) ~= 0) = nan;
+                sp_stratno2_a(mod(sp_xtrack_a, 2) ~= 0) = nan;
+                sp_lon = h5read(sp.Filename, h5dsetname(sp,1,2,1,2,'Longitude'));
+                sp_lat = h5read(sp.Filename, h5dsetname(sp,1,2,1,2,'Latitude'));
+                
+                for b=1:numel(regions)
+                    [lonlim, latlim, timeind] = define_regions(regions{b});
+                    % Skip this region if outside it's time period
+                    if ~timeind(d)
+                        continue
+                    end
+                    
                     xx = sp_lon >= lonlim(1) & sp_lon <= lonlim(2) & sp_lat >= latlim(1) & sp_lat <= latlim(2);
-                    if sum(xx) > 0
+                    %fprintf('SP b=%d, sum(xx) = %d\n',b,sum(xx(:)));
+                    if sum(xx(:)) > 0
                         sp_day_no2{b} = cat(1, sp_day_no2{b}, sp_stratno2_a(xx));
                     end
                 end
@@ -1476,12 +1531,12 @@ end
             
             for b=1:numel(regions)
                 if ~isempty(dom_day_no2)
-                    dom_stratno2{b}(d) = nanmean(dom_day_no2{b});
-                    dom_stratno2_sd{b}(d) = nanstd(dom_day_no2{b});
+                    dom_val{b}(d) = nanmean(dom_day_no2{b});
+                    dom_val_sd{b}(d) = nanstd(dom_day_no2{b});
                 end
                 if ~isempty(sp_day_no2)
-                    sp_stratno2{b}(d) = nanmean(sp_day_no2{b});
-                    sp_stratno2_sd{b}(d) = nanstd(sp_day_no2{b});
+                    sp_val{b}(d) = nanmean(sp_day_no2{b});
+                    sp_val_sd{b}(d) = nanstd(sp_day_no2{b});
                 end
             end
         end
@@ -1489,12 +1544,249 @@ end
         for b=1:numel(regions)
             figure;
             title(regions{b});
-            line(dom_stratno2{b}, sp_stratno2{b}, 'color', 'k', 'marker', 'o', 'linestyle', 'none');
-            scatter_errorbars(dom_stratno2{b}, sp_stratno2{b}, dom_stratno2_sd{b}, 'direction', 'x');
-            scatter_errorbars(dom_stratno2{b}, sp_stratno2{b}, sp_stratno2_sd{b}, 'direction', 'y');
-            xlabel('DOMINO strat NO2')
-            ylabel('SP strat NO2')
+            line(dom_val{b}, sp_val{b}, 'color', 'k', 'marker', 'o', 'linestyle', 'none');
+            scatter_errorbars(dom_val{b}, sp_val{b}, dom_val_sd{b}, 'direction', 'x');
+            scatter_errorbars(dom_val{b}, sp_val{b}, sp_val_sd{b}, 'direction', 'y');
+            xlabel(sprintf('DOMINO %s', dom_field))
+            ylabel(sprintf('SP %s', sp_field))
         end
+    end
+
+    function compare_ak_vec()
+        %fprintf('Loading file %d of %d\n',a,numel(F));
+        region = ask_multichoice('Which region to look at?', {'sa','saf','naf','seas'}, 'list', true);
+        ak_bool = ask_multichoice('Plot as scattering weights or AKs?', {'scattering weights', 'AKs'}, 'list', true);
+        ak_bool = strcmpi(ak_bool, 'AKs');
+        reldif_bool = ask_multichoice('Plot as relative difference?', {'y','n'});
+        reldif_bool = strcmpi(reldif_bool,'y');
+        
+        dvec = datenum('2012-01-01'):datenum('2012-12-31');
+        [lonlim,latlim,tt] = define_regions(region);
+        dvec = dvec(tt);
+        savenum=1;
+        % Pick a random date and load the files from that date
+        while true
+            r = randi(numel(dvec),1);
+            [dpath, dfiles] = domino_files(dvec(r));
+            [dom_aks, dom_plevs, dom_lon, dom_lat] = load_domino_aks(dpath, dfiles, lonlim, latlim, ak_bool);
+            [spath, sfiles] = sp_files(dvec(r));
+            [sp_aks, sp_plevs, sp_lon, sp_lat] = load_sp_aks(spath, sfiles, lonlim, latlim, ak_bool);
+            dom_nans = squeeze(all(isnan(dom_aks),1));
+            sp_nans = squeeze(all(isnan(sp_aks),1));
+            if all(dom_nans(:)) || all(sp_nans(:)) || numel(sp_lon) ~= numel(dom_lon)
+                continue
+            end
+            dom_notin = dom_lon < lonlim(1) | dom_lon > lonlim(2) | dom_lat < latlim(1) | dom_lat > latlim(2);
+            sp_notin = sp_lon < lonlim(1) | sp_lon > lonlim(2) | sp_lat < latlim(1) | sp_lat > latlim(2);
+            % We only want to look at pixels that are valid in both
+            % products
+            dom_aks(:, dom_nans | sp_nans | dom_notin | sp_notin) = [];
+            dom_plevs(:,dom_nans | sp_nans | dom_notin | sp_notin) = [];
+            dom_lon(dom_nans | sp_nans | dom_notin | sp_notin) = [];
+            dom_lat(dom_nans | sp_nans | dom_notin | sp_notin) = [];
+            sp_aks(:, dom_nans | sp_nans | dom_notin | sp_notin) = [];
+            sp_lon(dom_nans | sp_nans | dom_notin | sp_notin) = [];
+            sp_lat(dom_nans | sp_nans | dom_notin | sp_notin) = [];
+            
+            % Now choose a random pixel and plot it
+            while true
+                p = randi(numel(sp_lon),1);
+                fprintf('DOMINO pixel: %f, %f     SP pixel: %f, %f\n', dom_lon(p), dom_lat(p), sp_lon(p), sp_lat(p));
+                fig=figure;
+                if reldif_bool
+                    dom_at_sp_plevs = interp1(dom_plevs(:,p), dom_aks(:,p), sp_plevs);
+                    sp_at_dom_plevs = interp1(sp_plevs, sp_aks(:,p), dom_plevs(:,p));
+                    plot(reldiff(dom_aks(:,p), sp_at_dom_plevs)*100, dom_plevs(:,p));
+                    hold on
+                    plot(reldiff(dom_at_sp_plevs, sp_aks(:,p))*100, sp_plevs);
+                    legend('At DOMINO pres','At SP pres');
+                    xlabel('% difference (DOMINO - SP)');
+                else
+                    plot(dom_aks(:,p), dom_plevs(:,p));
+                    hold on
+                    plot(sp_aks(:,p), sp_plevs);
+                    legend('DOMINO', 'SP')
+                end
+                drawnow
+                
+                usersel = ask_multichoice('Enter n for a new profile, d for a new day, s to save the figure, or q to quit',{'n','d','s','q'});
+                if strcmpi(usersel,'s')
+                    if ak_bool
+                        ak_str = 'AKs';
+                    else
+                        ak_str = 'SWs';
+                    end
+                    savename = sprintf('%s-%s_%04d.png',region,ak_str,savenum);
+                    saveas(fig, savename);
+                    savenum = savenum+1;
+                    
+                    fprintf('Figure saved as %s\n',savename);
+                    usersel = ask_multichoice('Enter n for a new profile, d for a new day, or q to quit',{'n','d','q'});
+                end
+                close(fig);
+                switch usersel
+                    case 'd'
+                        break
+                    case 'q'
+                        return
+                end
+                
+            end
+        end
+        
+    end
+
+    function [aks, plevs, lon, lat] = load_sp_aks(filepath, files, lonlim, latlim, ak_bool)
+        aks = [];
+        lon = [];
+        lat = [];
+        for a = 1:numel(files)
+            sp = h5info(fullfile(filepath, files(a).name));
+            
+            % SP pressure levels are always the same
+            if a == 1
+                plevs = double(h5read(sp.Filename, h5dsetname(sp,1,2,1,1,'ScatteringWtPressure')));
+            end
+            
+            this_lon = h5read(sp.Filename, h5dsetname(sp,1,2,1,2,'Longitude'));
+            this_lat = h5read(sp.Filename, h5dsetname(sp,1,2,1,2,'Latitude'));
+            xx = this_lon >= lonlim(1) & this_lon <= lonlim(2) & this_lat >= latlim(1) & this_lat <= latlim(2);
+            if sum(xx) < 1
+                continue
+            end
+            this_lon(~xx) = [];
+            this_lat(~xx) = [];
+            
+            omi.sw = double(h5read(sp.Filename, h5dsetname(sp,1,2,1,1,'ScatteringWeight')));
+            omi.sw(omi.sw < 1e-29) = nan;
+            omi.amf = double(h5read(sp.Filename, h5dsetname(sp,1,2,1,1,'AmfTrop')));
+            omi.amf(omi.amf < 1e-29) = nan;
+            
+            % These are fields needed to reject pixels
+            omi.CloudFraction = double(h5read(sp.Filename, h5dsetname(sp,1,2,1,1,'CloudFraction')))*1e-3;
+            omi.CloudFraction(omi.CloudFraction<0) = nan;
+            omi.ColumnAmountNO2Trop = double(h5read(sp.Filename, h5dsetname(sp,1,2,1,1,'ColumnAmountNO2Trop')));
+            omi.ColumnAmountNO2Trop(omi.ColumnAmountNO2Trop<-1e29) = nan;
+            omi.vcdQualityFlags = double(h5read(sp.Filename, h5dsetname(sp,1,2,1,1, 'VcdQualityFlags')));
+            omi.vcdQualityFlags(omi.vcdQualityFlags==65535)=nan;
+            omi.XTrackQualityFlags = double(h5read(sp.Filename, h5dsetname(sp,1,2,1,1,'XTrackQualityFlags')));
+            omi.XTrackQualityFlags(omi.XTrackQualityFlags==255) = nan;
+            omi.TerrainReflectivity = double(h5read(sp.Filename, h5dsetname(sp,1,2,1,1,'TerrainReflectivity')));
+            omi.TerrainReflectivity(omi.TerrainReflectivity==-32767) = nan;
+            omi.TerrainReflectivity = omi.TerrainReflectivity * 1e-3;
+            omi.Areaweight = ones(size(omi.amf));
+            
+            omi = omi_sp_pixel_reject(omi,'geo',0.3,'XTrackFlags');
+            
+            rejects = omi.Areaweight == 0 | isnan(omi.CloudFraction) | isnan(omi.ColumnAmountNO2Trop)...
+                | isnan(omi.TerrainReflectivity) | omi.TerrainReflectivity > 0.3;
+            omi.sw(:,rejects) = nan;
+            omi.amf(rejects) = nan;
+            
+            omi.sw(:,~xx) = [];
+            omi.amf(~xx) = [];
+            
+            if ak_bool
+                this_aks = nan(size(omi.sw));
+                for b=1:numel(omi.amf)
+                    this_aks(:,b) = omi.sw(:,b) ./ omi.amf(b);
+                end
+            else
+                this_aks = omi.sw;
+            end
+            
+            
+            aks = cat(2, aks, this_aks);
+            lon = cat(2, lon, this_lon);
+            lat = cat(2, lat, this_lat);
+        end
+    end
+
+    function [aks, plevs, lon, lat] = load_domino_aks(filepath, files, lonlim, latlim, ak_bool)
+        aks = [];
+        plevs = [];
+        lon = [];
+        lat = [];
+        for a = 1:numel(files)
+            % Load in data and remove fill values
+            hi = h5info(fullfile(filepath, files(a).name));
+            
+            this_lon = h5read(hi.Filename, h5dsetname(hi,1,2,1,2,'Longitude'));
+            this_lat = h5read(hi.Filename, h5dsetname(hi,1,2,1,2,'Latitude'));
+            xx = this_lon >= lonlim(1) & this_lon <= lonlim(2) & this_lat >= latlim(1) & this_lat <= latlim(2);
+            if sum(xx) < 1
+                continue
+            end
+            this_lon(~xx) = [];
+            this_lat(~xx) = [];
+            
+            omi.aks = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,1,'AveragingKernel')))*0.001;
+            omi.aks(omi.aks<-30) = nan;
+            omi.amf = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,1,'AirMassFactorTropospheric')));
+            omi.amf(omi.amf<-1e29) = nan;
+            omi.TM4PresA = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,1,'TM4PressurelevelA')))*0.01; % in Pa, want hPa.
+            omi.TM4PresA(omi.TM4PresA<-1e30) = nan;
+            omi.TM4PresB = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,1,'TM4PressurelevelB')));
+            omi.TM4PresB(omi.TM4PresB<-1e30) = nan;
+            omi.TM4SurfP = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,1,'TM4SurfacePressure')));
+            omi.TM4SurfP(omi.TM4SurfP<-1e30) = nan;
+            % Rearrange so that the vertical or corner coordinate is first
+            omi.aks = permute(omi.aks, [3 1 2]);
+            
+            % Calculate the pressure levels for each pixel. 
+            omi.PresLevs = nan(size(omi.aks));
+            for x=1:size(omi.TM4SurfP,1)
+                for y=1:size(omi.TM4SurfP,2)
+                    omi.PresLevs(:,x,y) = omi.TM4PresA + omi.TM4SurfP(x,y) .* omi.TM4PresB;
+                end
+            end
+            
+            % These are fields needed to reject pixels
+            cldScaleFactor = double(h5readatt(hi.Filename, h5dsetname(hi,1,2,1,1,'CloudFraction'),'ScaleFactor'));
+            omi.CloudFraction = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,1,'CloudFraction')))*cldScaleFactor;
+            omi.CloudFraction(omi.CloudFraction<0) = nan;
+            vcdScaleFactor = double(h5readatt(hi.Filename, h5dsetname(hi,1,2,1,1,'TroposphericVerticalColumn'),'ScaleFactor'));
+            omi.ColumnAmountNO2Trop = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,1,'TroposphericVerticalColumn')))*vcdScaleFactor;
+            omi.TropColumnFlag = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,1,'TroposphericColumnFlag')));
+            albScaleFactor = double(h5readatt(hi.Filename, h5dsetname(hi,1,2,1,1,'SurfaceAlbedo'),'ScaleFactor'));
+            omi.Albedo = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,1,'SurfaceAlbedo')))*albScaleFactor;
+            
+            bad_vals = omi.CloudFraction > 0.3 | omi.ColumnAmountNO2Trop < 0 | omi.TropColumnFlag < 0 | omi.Albedo > 0.3;
+            omi.aks(:,bad_vals) = nan;
+            omi.PresLevs(:,bad_vals) = nan;
+            omi.amf(bad_vals) = nan;
+            if ak_bool
+                aks = cat(2, aks, omi.aks(:,xx));
+            else
+                omi.aks(:,~xx) = [];
+                omi.amf(~xx) = [];
+                this_sw = nan(size(omi.aks));
+                for b = 1:numel(omi.amf)
+                    this_sw(:,b) = omi.aks(:,b) .* omi.amf(b);
+                end
+                aks = cat(2, aks, this_sw);
+            end
+            plevs = cat(2, plevs, omi.PresLevs(:,xx));
+
+            lon = cat(2, lon, this_lon);
+            lat = cat(2, lat, this_lat);
+        end
+    end
+
+    function [filepath, files] = domino_files(date_in)
+        dom_dir = '/Volumes/share-sat/SAT/OMI/DOMINOv2.0/2012';
+        dom_pattern = 'OMI-Aura_L2-OMDOMINO_%04dm%02d%02d*';
+        filepath = fullfile(dom_dir, sprintf('%02d', month(date_in)));
+        filename = fullfile(filepath, sprintf(dom_pattern, year(date_in), month(date_in), day(date_in)));
+        files = dir(filename);
+    end
+
+    function [filepath, files] = sp_files(date_in)
+        sp_dir = '/Volumes/share-sat/SAT/OMI/OMNO2/2012';
+        sp_pattern = 'OMI-Aura_L2-OMNO2_%04dm%02d%02d*';
+        filepath = fullfile(sp_dir, sprintf('%02d', month(date_in)));
+        filename = fullfile(filepath, sprintf(sp_pattern, year(date_in), month(date_in), day(date_in)));
+        files = dir(filename);
     end
 end
 
