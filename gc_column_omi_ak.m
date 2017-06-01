@@ -434,7 +434,7 @@ for a=1:numel(F)
     albScaleFactor = double(h5readatt(hi.Filename, h5dsetname(hi,1,2,1,1,'SurfaceAlbedo'),'ScaleFactor'));
     omi.Albedo = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,1,'SurfaceAlbedo')))*albScaleFactor;
     
-    bad_vals = omi.CloudFraction > 0.3 | omi.ColumnAmountNO2Trop < 0 | omi.TropColumnFlag < 0 | omi.Albedo > 0.3;
+    bad_vals = omi.CloudFraction > 0.3 | omi.TropColumnFlag < 0 | omi.Albedo > 0.3 | isnan(omi.ColumnAmountNO2Trop) | isnan(omi.Albedo) | isnan(omi.CloudFraction) ;
     omi.aks(:,bad_vals) = nan;
     omi.PresLevs(:,bad_vals) = nan;
     
@@ -526,6 +526,7 @@ elseif strcmpi(retrieval,'domino')
 else
     E.notimplemented(retrieval)
 end
+DB=struct;
 for a=1:gc_nlat
     fprintf('Binning %.1f%% complete\n',a/gc_nlat*100);
     for b=1:gc_nlon
@@ -835,7 +836,7 @@ for a=1:sz(1)
                 omi_no2_columns(p) = nansum2((omi_no2_p * 1e-9) .* (omi_ndens_air_p * 1e-6) .* (omi_bxhght_p * 100) .* omi_aks(:,p));
 
                 if xor(all(isnan(omi_aks(:,p))), omi_weights(p) == 0 || isnan(omi_weights(p)))
-                    warning('For a = %d, b = %d, t = %d, p = %d, the AK is all NaNs but the weight is positive or vice versa',a,b,t,p)
+                    warning('For a = %d, b = %d, t = %d, p = %d, the AK is all NaNs (bool=%d) but the weight is positive (isnan=%d, ==0=%d) or vice versa',a,b,t,p, all(isnan(omi_aks(:,p))), isnan(omi_weights(p)), omi_weights(p)==0)
                 end
             end
             %fprintf('W%d: (%d,%d): Size omi_no2_columns = %s, Size omi_weights = %s, size omi_aks = %s\n',tstr.ID,a,b,mat2str(size(omi_no2_columns)),mat2str(size(omi_weights)), mat2str(size(omi_aks)));
