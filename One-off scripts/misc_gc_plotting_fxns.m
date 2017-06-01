@@ -50,7 +50,7 @@ switch plttype
     case 'wt-check'
         [varargout{1}, varargout{2}, varargout{3}, varargout{4}] = check_ak_vcd_domino_weights();
     case 'comp2sat'
-        [varargout{1}, varargout{2}, varargout{3}, varargout{4}, varargout{5}, varargout{6}] = compare_regions_to_sat(varargin{:});
+        [varargout{1}, varargout{2}, varargout{3}, varargout{4}, varargout{5}, varargout{6}, varargout{7}, varargout{8}] = compare_regions_to_sat(varargin{:});
     case 'strat_no2'
         domino_sp_scatter();
     case 'compare-aks'
@@ -179,6 +179,14 @@ end
             case 'sh'
                 lonlim = [-180, 180];
                 latlim = [-60, 60];
+                timeind = sh_mask;
+            case 'natl'
+                lonlim = [-50 -25];
+                latlim = [20 40];
+                timeind = nh_mask;
+            case 'spac'
+                lonlim = [-160 -120];
+                latlim = [-45 -10];
                 timeind = sh_mask;
             otherwise
                 lonlim = [-200, 200];
@@ -1142,7 +1150,7 @@ end
         saf_wt_rdel = reldiff(total_weights(xx,yy,:), sat_weights(xx,yy,:));
     end
 
-    function [omno2_no2, omno2_std, domino_no2, domino_std, omno2_gc, domino_gc] = compare_regions_to_sat(varargin)
+    function [omno2_no2, omno2_std, domino_no2, domino_std, omno2_gc, domino_gc, omno2_db, domino_db] = compare_regions_to_sat(varargin)
         % Will generate the (hopefully) final figure for Ben and my paper.
         % The current idea I have is to make two panels, one for OMNO2 one
         % for DOMINO that compare the average satellite columns for the
@@ -1213,7 +1221,8 @@ end
         fprintf('Done.\n');
         
         fprintf('Dividing sat data into regions...   ');
-        regions = {'sa','saf','naf','seas'};
+        %regions = {'sa','saf','naf','seas'};
+        regions = {'sa','saf','naf','seas','natl','spac'};
         %regions = {'na','sa','saf','naf','neur','seas'};
         omno2_no2 = make_empty_struct_from_cell(regions);
         omno2_std = make_empty_struct_from_cell(regions);
@@ -1322,7 +1331,7 @@ end
         % bottom.
         
         figure; 
-        subplot(2,1,1)
+        %subplot(2,1,1)
         
         cols = {'k','b','r'};
         marks = {'d','^','s'};
@@ -1347,7 +1356,7 @@ end
                 for a=1:numel(fields)
                     dx = a*0.5 - 1;
                     mod_sat_ratio = omno2_gc.(regions{r}).(fields{a}).mean / omno2_no2.(regions{r});
-                    l(a) = line(x+dx, mod_sat_ratio, 'color',cols{a},'marker',marks{a}, 'linestyle','none', 'linewidth', 2);
+                    l(a) = line(x+dx, mod_sat_ratio, 'color',cols{a},'marker',marks{1}, 'linestyle','none', 'linewidth', 2,'markersize',16);
                     
                     % Uncertainty propagation for f = x/y => 
                     % s_f^2 = s_m^2/y^2 + s_y^2 * m^2/y^4. Here m is the
@@ -1357,24 +1366,36 @@ end
                     y = omno2_no2.(regions{r});
                     s_y = omno2_std.(regions{r}) / sqrtn_o;
                     s_f = (s_m.^2)/(y.^2) + (m.^2)./(y.^4).*s_y;
-                    scatter_errorbars(x+dx, mod_sat_ratio, s_f, 'color', cols{a}, 'linewidth', 2);
+                    %scatter_errorbars(x+dx, mod_sat_ratio, s_f, 'color', cols{a}, 'linewidth', 2);
                     
-                    % This commented out line was just to see how much
-                    % difference the AKs made
-                    %l(a) = line(x+dx, domino_gc.(regions{r}).(fields{a}).mean / omno2_no2.(regions{r}),'color',cols{a},'marker',marks{a}, 'linestyle','none', 'linewidth', 2);
+                    mod_sat_ratio = domino_gc.(regions{r}).(fields{a}).mean / domino_no2.(regions{r});
+                    l(a+numel(fields)) = line(x+dx, mod_sat_ratio, 'color',cols{a},'marker',marks{2}, 'linestyle','none', 'linewidth', 2,'markersize',16);
+                    
+                    % Uncertainty propagation for f = x/y => 
+                    % s_f^2 = s_m^2/y^2 + s_y^2 * m^2/y^4. Here m is the
+                    % model values and y the satellite values.
+                    m = domino_gc.(regions{r}).(fields{a}).mean;
+                    s_m = domino_gc.(regions{r}).(fields{a}).std / sqrtn_d;
+                    y = domino_no2.(regions{r});
+                    s_y = domino_std.(regions{r}) / sqrtn_d;
+                    s_f = (s_m.^2)/(y.^2) + (m.^2)./(y.^4).*s_y;
+                    %scatter_errorbars(x+dx+0.25, mod_sat_ratio, s_f, 'color', cols{a}, 'linewidth', 2);
                 end
             end
         end
-        set(gca,'xtick',[1 3 5 7]);
-        %set(gca,'xtick',[1 3 5 7 9 11]);
-        set(gca,'xticklabels',{'S. Am.','S. Af.','N. Af.', 'SE Asia'});
+        %set(gca,'xtick',[1 3 5 7]);
+        set(gca,'xtick',[1 3 5 7 9 11]);
+        %set(gca,'xticklabels',{'S. Am.','S. Af.','N. Af.', 'SE Asia'});
+        set(gca,'xticklabels',{'S. Am.','S. Af.','N. Af.', 'SE Asia', 'N. Atl.', 'S. Pac.'});
         %set(gca,'xticklabels',{'N. Am.','S. Am.','S. Af.','N. Af.', 'N. Eur.', 'SE Asia'});
-        set(gca,'fontsize',16);
+        set(gca,'fontsize',16,'ygrid','on');
         if ~plot_ratio_bool
             legend(l',{'OMNO2','Base case','Final case','Final case +33%'});
         else
-            legend(l',{'Base case','Final case','Final case +33%'});
+            legend(l',{'Base case vs. SP','Final case vs. SP','Final case +33% vs. SP', 'Base case vs. DOM','Final case vs. DOM','Final case +33% vs. DOM'});
         end
+        
+        return;
         
         subplot(2,1,2);
         for r=1:numel(regions)

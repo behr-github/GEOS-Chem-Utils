@@ -20,24 +20,41 @@ end
 varnames = {ni.Variables.Name};
 data_varnames = varnames(data_vars);
 
-GC = repmat(struct('dataBlock',[],'dataUnit','','fullName','','tVec',[],'modelName','','modelRes',[],'lon',[],'lat',[]), 1, sum(data_vars));
+GC = repmat(struct('dataBlock',[],'dataUnit','','fullName','','fullCat','','tVec',[],'tEdge',[],'modelName','','modelRes',[],'lon',[],'lat',[]), 1, sum(data_vars));
 
 for a=1:numel(GC)
     % Read in the common values and attributes first
     GC(a).modelName = ncreadatt(ni.Filename, '/', 'modelName');
-    GC(a).modelRes = ncreadatt(ni.Filename, '/', 'modelRes');
-    GC(a).tVec = ncread(ni.Filename, 'time');
-    GC(a).lon = ncread(ni.Filename, 'lon');
-    GC(a).lat = ncread(ni.Filename, 'lat');
+    GC(a).modelRes = double(ncreadatt(ni.Filename, '/', 'modelRes'));
+    GC(a).tVec = double(ncread(ni.Filename, 'time')) + datenum('1985-01-01');
+    GC(a).lon = double(ncread(ni.Filename, 'lon'));
+    GC(a).lat = double(ncread(ni.Filename, 'lat'));
+    if ismember('time_edge',varnames)
+        GC(a).tEdge = double(ncread(ni.Filename, 'time_edge')) + datenum('1985-01-01');
+    else
+        GC(a).tEdge = nan(numel(GC(a).tVec)+1,1);
+    end
     
     % Now the variable-specific values
-    GC(a).dataBlock = ncread(ni.Filename, data_varnames{a});
+    GC(a).dataBlock = double(ncread(ni.Filename, data_varnames{a}));
     GC(a).dataUnit = ncreadatt(ni.Filename, data_varnames{a}, 'Units');
     % The variable names have been sanitized a bit from how they are read
     % directly from the .bpch files, in particular, excess dashes (-) and
     % dollar signs ($) were removed. Some functions that rely on matching
     % the variable name may need to be modified to take that into account.
-    GC(a).fullName = data_varnames{a};
+    %
+    % Also, in gcstruct2ncdf, we prepend the category if it is not an empty
+    % string. Therefore, we need to split that back out, if the delimiter
+    % '-' is present
+    name_cell = strsplit(data_varnames{a},'-');
+    if numel(name_cell) == 1
+        GC(a).fullName = name_cell{1};
+    elseif numel(name_cell) == 2
+        GC(a).fullName = name_cell{2};
+        GC(a).fullCat = name_cell{1};
+    else
+        error('gc_netcdf:var_name_parse','More than one dash found in variable name, do not know how to deal with that')
+    end
 end
 
 
