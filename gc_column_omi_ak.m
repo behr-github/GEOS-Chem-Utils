@@ -408,6 +408,18 @@ for a=1:numel(F)
     omi.TM4SurfP(omi.TM4SurfP<-1e30) = nan;
     % Rearrange so that the vertical or corner coordinate is first
     omi.aks = permute(omi.aks, [3 1 2]);
+
+    % These are the aks vector using the total AMF. We need to convert to the tropospheric AMF
+    amf = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,1,'AirMassFactor')));
+    amf(amf < -1e30) = nan;
+    amftrop = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,1,'AirMassFactorTropospheric')));
+    amftrop(amftrop < -1e30) = nan;
+
+    for x=1:size(amf,1)
+        for y=1:size(amf,2)
+            omi.aks(:,x,y) = omi.aks(:,x,y) * amf(x,y) / amftrop(x,y);
+        end
+    end
     
     % Calculate the pressure levels for each pixel. We'll also need the
     % bottom pressure edges to compare with box height in the integration
