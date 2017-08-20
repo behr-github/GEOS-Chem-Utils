@@ -46,15 +46,8 @@ for a=1:numel(GC)
     % Also, in gcstruct2ncdf, we prepend the category if it is not an empty
     % string. Therefore, we need to split that back out, if the delimiter
     % '-' is present
-    name_cell = strsplit(data_varnames{a},'-');
-    if numel(name_cell) == 1
-        GC(a).fullName = name_cell{1};
-    elseif numel(name_cell) == 2
-        GC(a).fullName = name_cell{2};
-        GC(a).fullCat = name_cell{1};
-    else
-        error('gc_netcdf:var_name_parse','More than one dash found in variable name, do not know how to deal with that')
-    end
+    GC(a).fullCat = ncreadatt(ni.Filename, data_varnames{a}, 'Diagnostic_Category');
+    GC(a).fullName = ncreadatt(ni.Filename, data_varnames{a}, 'Tracer_Name');
 end
 
 

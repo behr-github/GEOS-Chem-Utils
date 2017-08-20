@@ -55,6 +55,8 @@ switch plttype
         domino_sp_scatter();
     case 'compare-aks'
         compare_ak_vec();
+    case 'compare-raw-aks'
+        compare_raw_aks()
     otherwise
         fprintf('Did not recognize plot type\n');
         return
@@ -1657,6 +1659,87 @@ end
         
     end
 
+    function compare_raw_aks()
+        region = ask_multichoice('Which region to look at?', {'sa','saf','naf','seas'}, 'list', true);
+        ak_or_sw = ask_multichoice('Plot as scattering weights or AKs?', {'Scattering Weight', 'AKs'}, 'list', true);
+        ak_bool = strcmpi(ak_or_sw, 'AKs');
+        
+        dvec = datenum('2012-01-01'):datenum('2012-12-31');
+        [lonlim,latlim,tt] = define_regions(region);
+        dvec = dvec(tt);
+        
+        figure; 
+        title(sprintf('DOMINO ensemble - %s', upper(region)));
+        
+        day_incr = 15;
+        for a=1:day_incr:numel(dvec)
+            fprintf('Now on day %d of %d\n', a, floor(numel(dvec)/day_incr));
+            [dpath, dfiles] = domino_files(dvec(a));
+            [dom_aks, dom_plevs, dom_lon, dom_lat] = load_domino_aks(dpath, dfiles, lonlim, latlim, ak_bool);
+            [spath, sfiles] = sp_files(dvec(a));
+            [sp_aks, sp_plevs, sp_lon, sp_lat] = load_sp_aks(spath, sfiles, lonlim, latlim, ak_bool);
+            dom_nans = squeeze(all(isnan(dom_aks),1));
+            sp_nans = squeeze(all(isnan(sp_aks),1));
+            if all(dom_nans(:)) || all(sp_nans(:)) || numel(sp_lon) ~= numel(dom_lon)
+                continue
+            end
+            dom_notin = dom_lon < lonlim(1) | dom_lon > lonlim(2) | dom_lat < latlim(1) | dom_lat > latlim(2);
+            sp_notin = sp_lon < lonlim(1) | sp_lon > lonlim(2) | sp_lat < latlim(1) | sp_lat > latlim(2);
+            
+            % We only want to look at pixels that are valid in both
+            % products
+            dom_aks(:, dom_nans | sp_nans | dom_notin | sp_notin) = [];
+            dom_plevs(:,dom_nans | sp_nans | dom_notin | sp_notin) = [];
+            dom_lon(dom_nans | sp_nans | dom_notin | sp_notin) = [];
+            dom_lat(dom_nans | sp_nans | dom_notin | sp_notin) = [];
+            sp_aks(:, dom_nans | sp_nans | dom_notin | sp_notin) = [];
+            sp_lon(dom_nans | sp_nans | dom_notin | sp_notin) = [];
+            sp_lat(dom_nans | sp_nans | dom_notin | sp_notin) = [];
+            
+            % For both, we'll average them over time, but for DOMINO we
+            % also want to plot the ensemble to prove that the
+            % interpolation is behaving correctly (and hope that this
+            % doesn't crash matlab b/c of too many lines)
+            if a == 1
+                sp_mean = nan(numel(sp_plevs),1);
+                sp_count = 0;
+                dom_mean = nan(numel(sp_plevs),1);
+                dom_count = 0;
+            end
+            
+            for b=1:size(dom_aks,2)
+                line(dom_aks(:,b), dom_plevs(:,b), 'color', [0.5 0.5 0.5]);
+                % We'll use the SP pressure levels to interpolate to b/c
+                % they are nice and consistent
+                interp_dom = interp1(dom_plevs(:,b), dom_aks(:,b), sp_plevs(:));
+                dom_mean = nansum2(cat(2, dom_mean, interp_dom),2);
+                dom_count = dom_count + 1;
+            end
+            
+            for b=1:size(sp_aks,2)
+                sp_mean = nansum2(cat(2, sp_mean, sp_aks(:,b)),2);
+                sp_count = sp_count + 1;
+            end
+            
+        end
+        
+        dom_mean = dom_mean / dom_count;
+        sp_mean = sp_mean / sp_count;
+        line(dom_mean, sp_plevs, 'color', 'b', 'linewidth', 2);
+        set(gca,'fontsize',16,'ydir','reverse')
+        xlabel(ak_or_sw); ylabel('Pressure (hPa)');
+        
+        figure;
+        l = gobjects(2,1);
+        l(1) = line(sp_mean, sp_plevs, 'color', 'r', 'linewidth', 2);
+        l(2) = line(dom_mean, sp_plevs, 'color', 'b', 'linewidth', 2);
+        legend(l, {sprintf('NASA SP (%d pixels)', sp_count), sprintf('DOMINO (%d pixels)', dom_count)}, 'location', 'NorthWest');
+        xlabel(ak_or_sw); ylabel('Pressure (hPa)');
+        set(gca,'fontsize',16,'ydir','reverse');
+        ylim([0 1013]);
+        title(sprintf('Avg. %s: %s', ak_or_sw, upper(region)));
+    end
+
     function [aks, plevs, lon, lat] = load_sp_aks(filepath, files, lonlim, latlim, ak_bool)
         aks = [];
         lon = [];
@@ -1743,8 +1826,10 @@ end
             
             omi.aks = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,1,'AveragingKernel')))*0.001;
             omi.aks(omi.aks<-30) = nan;
-            omi.amf = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,1,'AirMassFactorTropospheric')));
+            omi.amf = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,1,'AirMassFactor')));
             omi.amf(omi.amf<-1e29) = nan;
+            omi.amftrop = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,1,'AirMassFactorTropospheric')));
+            omi.amftrop(omi.amftrop<-1e29) = nan;
             omi.TM4PresA = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,1,'TM4PressurelevelA')))*0.01; % in Pa, want hPa.
             omi.TM4PresA(omi.TM4PresA<-1e30) = nan;
             omi.TM4PresB = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,1,'TM4PressurelevelB')));
@@ -1777,6 +1862,9 @@ end
             omi.PresLevs(:,bad_vals) = nan;
             omi.amf(bad_vals) = nan;
             if ak_bool
+                for b=1:numel(omi.amf)
+                    omi.aks(:,b) = omi.aks(:,b) * omi.amf(b) / omi.amftrop(b);
+                end
                 aks = cat(2, aks, omi.aks(:,xx));
             else
                 omi.aks(:,~xx) = [];
@@ -1803,7 +1891,7 @@ end
     end
 
     function [filepath, files] = sp_files(date_in)
-        sp_dir = '/Volumes/share-sat/SAT/OMI/OMNO2/2012';
+        sp_dir = '/Volumes/share-sat/SAT/OMI/OMNO2/version_3_2_1/2012';
         sp_pattern = 'OMI-Aura_L2-OMNO2_%04dm%02d%02d*';
         filepath = fullfile(sp_dir, sprintf('%02d', month(date_in)));
         filename = fullfile(filepath, sprintf(sp_pattern, year(date_in), month(date_in), day(date_in)));
