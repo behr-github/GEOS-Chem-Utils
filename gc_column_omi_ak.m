@@ -1,4 +1,4 @@
-function [ gc_no2 ] = gc_column_omi_ak( gc_no2, gc_bxhght, gc_pressure, gc_ndens_air, gc_tp, retrieval )
+function [ gc_no2 ] = gc_column_omi_ak( gc_no2, gc_bxhght, gc_pressure, gc_ndens_air, gc_tp, retrieval, no2_nox_ratio_file )
 %GC_COLUMN_OMI_AK Applies OMI averaging kernels to calculation of GEOS-Chem columns.
 %   Averaging kernels are used to describe how a change in the "true" state
 %   of a system is expressed as a change in the observations of a system.
@@ -156,6 +156,18 @@ else
     E.badinput('If not running in bin only mode, then the GEOS-Chem output structures MUST be passed as arguments');
 end
 
+if ~ischar(no2_nox_ratio_file) || ~exist(no2_nox_ratio_file, 'file')
+    E.badinput('SCALE_NO2_NOX_RATIO must be a string pointing to the GEOS-Chem/DC3 NO2/NOx ratio file');
+elseif isempty(no2_nox_ratio_file)
+    no2nox.dc3_ratio = [1 1];
+    no2nox.gc_ratio = [1 1];
+    no2nox.dc3_pres = [1013, 200];
+    no2nox.gc_pres = [1013, 200];
+else
+    [ no2nox.dc3_pres, no2nox.dc3_ratio, no2nox.gc_pres, no2nox.gc_ratio ] = read_no2_nox_ratio_file( no2_nox_ratio_file );
+end
+    
+
 sz_wt = size(total_weights);
 
 parfor d=1:numel(tVec)
@@ -186,7 +198,7 @@ parfor d=1:numel(tVec)
                 binned_weights = AK.binned_weights;
             end
         
-            columns(:,:,d) = integrate_omi_profile(gc_no2_data(:,:,:,d), gc_bxhght_data(:,:,:,d), gc_pressure_data(:,:,:,d), gc_ndens_air_data(:,:,:,d), gc_tp_data(:,:,d), binned_aks);
+            columns(:,:,d) = integrate_omi_profile(gc_no2_data(:,:,:,d), gc_bxhght_data(:,:,:,d), gc_pressure_data(:,:,:,d), gc_ndens_air_data(:,:,:,d), gc_tp_data(:,:,d), binned_aks, no2nox);
             tmp_wts = nan(sz_wt(1:2));
             for i=1:sz_wt(1)
                 for j=1:sz_wt(2)
@@ -227,7 +239,7 @@ parfor d=1:numel(tVec)
                 binned_pres_edge = AK.binned_pres_edge;
                 binned_weights = AK.binned_weights;
             end
-            columns(:,:,d) = integrate_domino_profile(gc_no2_data(:,:,:,d), gc_bxhght_data(:,:,:,d), gc_pressure_data(:,:,:,d), gc_ndens_air_data(:,:,:,d), gc_tp_data(:,:,d), binned_aks, binned_pres, binned_pres_edge, binned_weights);
+            columns(:,:,d) = integrate_domino_profile(gc_no2_data(:,:,:,d), gc_bxhght_data(:,:,:,d), gc_pressure_data(:,:,:,d), gc_ndens_air_data(:,:,:,d), gc_tp_data(:,:,d), binned_aks, no2nox, binned_pres, binned_pres_edge, binned_weights);
             tmp_wts = nan(sz_wt(1:2));
             for i=1:sz_wt(1)
                 for j=1:sz_wt(2)
@@ -670,7 +682,7 @@ function [x,y]= uncross_corners(x,y)
     end 
 end
 
-function no2_columns = integrate_omi_profile(gc_no2, gc_bxhght, gc_pressure, gc_ndens_air, gc_tp, binned_aks)
+function no2_columns = integrate_omi_profile(gc_no2, gc_bxhght, gc_pressure, gc_ndens_air, gc_tp, binned_aks, no2nox_ratios)
 % This will integrate the geos-chem columns weighted by the OMI AKs after
 % interpolating to the OMI pressures.  The integration will be carried out
 % after that in the same manner as integrate_geoschem_profile, that is,
@@ -722,11 +734,14 @@ for a=1:sz(1)
             
             % Finally interpolate the GC NO2 mixing ratio values (scaling
             % to straight mixing ratios, i.e. parts-per-part). I'll do this
-            % in log-log space, which I've seen before. We will NOT
+            % in log-log space, which I've seen before. At the same time,
+            % scale the GC profiles to account for the discrepancy in
+            % NO2:NOx ratio between GEOS-Chem and DC3. We will NOT
             % extrapolate this time, because I do not want there to be
             % values below the surface (so outside of the GC pressure
             % values, it will have the value of NaN)
             gc_no2vec = squeeze(gc_no2(a,b,:,t));
+            gc_no2vec = scale_gc_prof(gc_no2vec, gc_pvec(1:end-1), no2nox_ratios);
             omi_no2(a,b,:,t) = exp(interp1(log(gc_pvec(1:end-1)), log(gc_no2vec), log(omi_pres)));
             strat = omi_pres < gc_pressure(a,b,floor(gc_tp(a,b,t)),t);
             omi_no2(a,b,strat,t) = nan;
@@ -743,7 +758,7 @@ no2_columns = squeeze(nansum2(omi_no2_ndens,3));
 
 end
 
-function no2_columns = integrate_domino_profile(gc_no2, gc_bxhght, gc_pressure, gc_ndens_air, gc_tp, binned_aks, binned_pres, binned_pres_edge, binned_weights)
+function no2_columns = integrate_domino_profile(gc_no2, gc_bxhght, gc_pressure, gc_ndens_air, gc_tp, binned_aks, no2nox_ratios, binned_pres, binned_pres_edge, binned_weights)
 % This will integrate the geos-chem columns weighted by the OMI AKs after
 % interpolating to the OMI pressures.  The integration will be carried out
 % after that in the same manner as integrate_geoschem_profile, that is,
@@ -798,6 +813,7 @@ for a=1:sz(1)
             gc_zvec = cat(1, 0, squeeze(gc_z(a,b,:,t)));
             gc_nair_vec = squeeze(gc_ndens_air(a,b,:,t));
             gc_no2vec = squeeze(gc_no2(a,b,:,t));
+            gc_no2vec = scale_gc_prof(gc_no2vec, gc_pvec, no2nox_ratios);
             
             omi_no2_columns = nan(1,size(omi_aks,2));
             for p=1:size(omi_aks,2)
@@ -845,4 +861,14 @@ for a=1:sz(1)
     end
 end
 
+end
+
+function gc_prof = scale_gc_prof(gc_prof, prof_pres, no2nox_ratios)
+% The first step is to interpolate the ratios to the model pressure, in
+% log-log space again. Values outside the ratios' pressure range are set to
+% 0, so that when exponentiated, they become 1, i.e. don't scale the
+% profile where we don't have the data to do so.
+dc3_ratio = exp(intep1(log(no2nox_ratios.dc3_pres), log(no2nox_ratios.dc3_ratio), log(prof_pres), 'linear', 0));
+gc_ratio = exp(intep1(log(no2nox_ratios.gc_pres), log(no2nox_ratios.gc_ratio), log(prof_pres), 'linear', 0));
+gc_prof = gc_prof .* dc3_ratio ./ gc_ratio;
 end
