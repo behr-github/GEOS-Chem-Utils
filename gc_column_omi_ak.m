@@ -1,4 +1,4 @@
-function [ gc_no2 ] = gc_column_omi_ak( gc_no2, gc_bxhght, gc_pressure, gc_ndens_air, gc_tp, retrieval, no2_nox_ratio_file )
+function [ gc_no2 ] = gc_column_omi_ak( gc_no2, gc_bxhght, gc_pressure, gc_ndens_air, gc_tp, retrieval, no2_nox_ratio_bool )
 %GC_COLUMN_OMI_AK Applies OMI averaging kernels to calculation of GEOS-Chem columns.
 %   Averaging kernels are used to describe how a change in the "true" state
 %   of a system is expressed as a change in the observations of a system.
@@ -156,21 +156,26 @@ else
     E.badinput('If not running in bin only mode, then the GEOS-Chem output structures MUST be passed as arguments');
 end
 
-if ~ischar(no2_nox_ratio_file) || ~exist(no2_nox_ratio_file, 'file')
-    E.badinput('SCALE_NO2_NOX_RATIO must be a string pointing to the GEOS-Chem/DC3 NO2/NOx ratio file');
-elseif isempty(no2_nox_ratio_file)
+if ~exist('no2_nox_ratio_bool', 'var') && strcmpi(run_mode, 'apply_aks')
+    E.badinput('In apply mode, NO2_NOX_RATIO_BOOL must be given');
+elseif ~islogical(no2_nox_ratio_bool) || ~isscalar(no2_nox_ratio_bool)
+    E.badinput('SCALE_NO2_NOX_RATIO must be a scalar logical');
+elseif ~no2_nox_ratio_bool
     no2nox.dc3_ratio = [1 1];
     no2nox.gc_ratio = [1 1];
     no2nox.dc3_pres = [1013, 200];
     no2nox.gc_pres = [1013, 200];
 else
-    [ no2nox.dc3_pres, no2nox.dc3_ratio, no2nox.gc_pres, no2nox.gc_ratio ] = read_no2_nox_ratio_file( no2_nox_ratio_file );
+    mydir = fileparts(mfilename('fullpath'));
+    ratio_file = fullfile(mydir, 'Data', 'no2nox_ratios.txt');
+    [ no2nox.dc3_pres, no2nox.dc3_ratio, no2nox.gc_pres, no2nox.gc_ratio ] = read_no2_nox_ratio_file( ratio_file );
 end
     
 
 sz_wt = size(total_weights);
 
-parfor d=1:numel(tVec)
+%parfor d=1:numel(tVec)
+for d=1:numel(tVec)
     fprintf('Loading OMI files for %s\n',datestr(tVec(d)));
     earth_ellip = referenceEllipsoid('wgs84','kilometer');
     if strcmpi(retrieval,'omno2')
@@ -813,7 +818,7 @@ for a=1:sz(1)
             gc_zvec = cat(1, 0, squeeze(gc_z(a,b,:,t)));
             gc_nair_vec = squeeze(gc_ndens_air(a,b,:,t));
             gc_no2vec = squeeze(gc_no2(a,b,:,t));
-            gc_no2vec = scale_gc_prof(gc_no2vec, gc_pvec, no2nox_ratios);
+            gc_no2vec = scale_gc_prof(gc_no2vec, gc_pvec(1:end-1), no2nox_ratios);
             
             omi_no2_columns = nan(1,size(omi_aks,2));
             for p=1:size(omi_aks,2)
@@ -868,7 +873,7 @@ function gc_prof = scale_gc_prof(gc_prof, prof_pres, no2nox_ratios)
 % log-log space again. Values outside the ratios' pressure range are set to
 % 0, so that when exponentiated, they become 1, i.e. don't scale the
 % profile where we don't have the data to do so.
-dc3_ratio = exp(intep1(log(no2nox_ratios.dc3_pres), log(no2nox_ratios.dc3_ratio), log(prof_pres), 'linear', 0));
-gc_ratio = exp(intep1(log(no2nox_ratios.gc_pres), log(no2nox_ratios.gc_ratio), log(prof_pres), 'linear', 0));
+dc3_ratio = exp(interp1(log(no2nox_ratios.dc3_pres), log(no2nox_ratios.dc3_ratio), log(prof_pres), 'linear', 0));
+gc_ratio = exp(interp1(log(no2nox_ratios.gc_pres), log(no2nox_ratios.gc_ratio), log(prof_pres), 'linear', 0));
 gc_prof = gc_prof .* dc3_ratio ./ gc_ratio;
 end
