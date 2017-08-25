@@ -59,6 +59,8 @@ switch plttype
         compare_ak_vec();
     case 'compare-raw-aks'
         compare_raw_aks()
+    case 'emissions'
+        compute_emissions();
     otherwise
         fprintf('Did not recognize plot type\n');
         return
@@ -1229,9 +1231,9 @@ end
         fprintf('Done.\n');
         
         fprintf('Dividing sat data into regions...   ');
-        %regions = {'sa','saf','naf','seas'}; region_xlabels = {'S. Am.','S. Af.','N. Af.', 'SE Asia'};
+        regions = {'sa','saf','naf','seas'}; region_xlabels = {'S. Am.','S. Af.','N. Af.', 'SE Asia'};
         %regions = {'sa','saf','naf','seas','natl','spac'}; region_xlabels = {'S. Am.','S. Af.','N. Af.', 'SE Asia', 'N. Atl.', 'S. Pac.'};
-        regions = {'na','sa','saf','naf','neur','seas'}; region_xlabels = {'N. Am.','S. Am.','S. Af.','N. Af.', 'N. Eur.', 'SE Asia'};
+        %regions = {'na','sa','saf','naf','neur','seas'}; region_xlabels = {'N. Am.','S. Am.','S. Af.','N. Af.', 'N. Eur.', 'SE Asia'};
         omno2_no2 = make_empty_struct_from_cell(regions);
         omno2_std = make_empty_struct_from_cell(regions);
         domino_no2 = make_empty_struct_from_cell(regions);
@@ -1275,9 +1277,9 @@ end
         
         % Now load each of the 3 cases from GEOS-Chem for each of the
         % products' AKs and get the same regions.
-        gc_path = '/Users/Josh/Documents/MATLAB/MPN Project/Workspaces/Pickering Parameterization/DailyOMI/AllAKsDaily-newweight-allvcd';
+        gc_path = '/Users/Josh/Documents/MATLAB/MPN Project/Workspaces/Pickering Parameterization/DailyOMI/AllAKsDaily-newweight-allvcd-domtrop-ratioscale';
         chems = {'JPLnoMPN','HendwMPN-PNA-N2O5','HendwMPN-PNA-N2O5'};
-        omno2_ak_files = {'JPLnoMPN-Pickp0-OMI_NO2_OMNO2_aks_newweight_allvcd.mat','HendwMPN-PNA-N2O5-Pickp0-OMI_NO2_OMNO2_aks_newweight_allvcd.mat','HendwMPN-PNA-N2O5-Pickp33-OMI_NO2_OMNO2_aks_newweight_allvcd.mat'};
+        omno2_ak_files = {'JPLnoMPN-Pickp0-OMI_NO2_OMNO2_aks_newweight_allvcd_domtrop.mat','HendwMPN-PNA-N2O5-Pickp0-OMI_NO2_OMNO2_aks_newweight_allvcd_domtrop.mat','HendwMPN-PNA-N2O5-Pickp33-OMI_NO2_OMNO2_aks_newweight_allvcd_domtrop.mat'};
         dom_ak_files = {'JPLnoMPN-Pickp0-OMI_NO2_DOMINO_aks_newweight_allvcd_domtrop.mat','HendwMPN-PNA-N2O5-Pickp0-OMI_NO2_DOMINO_aks_newweight_allvcd_domtrop.mat','HendwMPN-PNA-N2O5-Pickp33-OMI_NO2_DOMINO_aks_newweight_allvcd_domtrop.mat'};
         fields = {'Base','Final','Final33'};
         gc_data = make_empty_struct_from_cell(fields);
@@ -1406,7 +1408,7 @@ end
                     s_f = sqrt((s_m.^2)/(y.^2) + (m.^2)./(y.^4).*s_y.^2);
                     
                     %s_f = (y + s_m)./y; % Ben's simple way (ignores uncertainty in the satellite)
-                    scatter_errorbars(x+dx, mod_sat_ratio, s_f, 'color', cols{a}, 'linewidth', 2);
+                    %scatter_errorbars(x+dx, mod_sat_ratio, s_f, 'color', cols{a}, 'linewidth', 2);
                     
                     mod_sat_ratio = domino_gc.(regions{r}).(fields{a}).mean / domino_no2.(regions{r});
                     l(a+numel(fields)) = line(x+dx, mod_sat_ratio, 'color',cols{a},'marker',marks{2}, 'linestyle','none', 'linewidth', 2,'markersize',16);
@@ -1421,7 +1423,7 @@ end
                     s_f = sqrt((s_m.^2)/(y.^2) + (m.^2)./(y.^4).*s_y.^2);
                     
                     %s_f = (y + s_m)./y; % Ben's simple way (ignores uncertainty in the satellite)
-                    scatter_errorbars(x+dx+0.25, mod_sat_ratio, s_f, 'color', cols{a}, 'linewidth', 2);
+                    %scatter_errorbars(x+dx+0.25, mod_sat_ratio, s_f, 'color', cols{a}, 'linewidth', 2);
                 end
             end
         end
@@ -1820,6 +1822,49 @@ end
         ylim([0 1013]);
         title(sprintf('Avg. %s: %s', ak_or_sw, upper(region)));
     end
+
+    function compute_emissions()
+        emis_dir = '/Users/Josh/Documents/MATLAB/MPN Project/Workspaces/Pickering Parameterization/Daily24hrs/All2012Daily';
+        area_file = fullfile(emis_dir, 'Area.mat');
+        emis_files.base = fullfile(emis_dir, 'JPLnoMPN-Pickp0-Prod.mat');
+        emis_files.updated = fullfile(emis_dir, 'HendwMPN-Pickp0-Prod.mat');
+        emis_files.updated33 = fullfile(emis_dir, 'HendwMPN-Pickp33-Prod.mat');
+        
+        fns = fieldnames(emis_files);
+        Afile = load(area_file);
+        area_var = fieldnames(Afile);
+        area = Afile.(area_var{1});
+        
+        for a=1:numel(fns);
+            fprintf('Loading %s case...\n', fns{a});
+            D = load(emis_files.(fns{a}));
+            emis_var = fieldnames(D);
+            emis = D.(emis_var{1});
+            
+            [total_prod, db] = geos_integrate_prod(area, emis(6));
+            
+            if strcmpi(fns{a}, 'base')
+                base_prod = db.prod_grid;
+            elseif strcmpi(fns{a}, 'updated33');
+                new_prod = db.prod_grid;
+            end
+        
+            % Convert from moles to Tg (* molec. mass N, /1e12)
+            fprintf('   %s case total lightning NO production = %f Tg N yr^{-1}\n', fns{a}, total_prod * 14e-12);
+        end
+        
+        [~,glat] = geos_chem_centers('2x25');
+        n_hemisphere = glat >= 0;
+        hybrid_prod = nan(size(base_prod));
+        hybrid_prod(:,n_hemisphere) = new_prod(:,n_hemisphere);
+        hybrid_prod(:,~n_hemisphere) = base_prod(:,~n_hemisphere);
+        
+        fprintf('\n    Production assuming +33%% only in northern hemisphere: %f Tg N yr^{-1}\n', nansum(hybrid_prod(:))*14e-12);
+    end
+
+%%%%%%%%%%%%%%%%%%%%
+% HELPER FUNCTIONS %
+%%%%%%%%%%%%%%%%%%%%
 
     function [aks, plevs, lon, lat] = load_sp_aks(filepath, files, lonlim, latlim, ak_bool)
         aks = [];

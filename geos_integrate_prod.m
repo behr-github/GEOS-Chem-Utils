@@ -81,6 +81,7 @@ area_list = [];
 db.prod = [];
 db.n_sec = [];
 db.tvec = [];
+db.prod_grid = [];
 
 
 for a=1:numel(Emis)
@@ -91,6 +92,7 @@ for a=1:numel(Emis)
     % tEdge has an extra entry over the number of time periods, since each
     % needs a start and end.
     n_times = length(Emis(a).tEdge) - 1;
+    sz = size(Emis(a).dataBlock);
     this_emis = reshape(Emis(a).dataBlock,[],n_times);
     
     n_levels = size(this_emis,1) / numel(area);
@@ -105,16 +107,26 @@ for a=1:numel(Emis)
         t_vec = datevec(Emis(a).tEdge(b:b+1));
         n_sec = etime(t_vec(2,:), t_vec(1,:));
         
-        total_prod = total_prod + nansum(this_emis(:,b) .* this_area * n_sec, 1);
+        prod_slice = this_emis(:,b) .* this_area * n_sec;
+        total_prod = total_prod + nansum(prod_slice, 1);
         db.prod = cat(1,db.prod,total_prod);
         db.n_sec = cat(1,db.n_sec,n_sec);
         db.tvec = cat(1, db.tvec, t_vec');
+        
+        prod_slice = nansum(reshape(prod_slice, sz(1:3)),3);
+        if isempty(db.prod_grid)
+            db.prod_grid = prod_slice;
+        else
+            db.prod_grid = nansum(cat(3, db.prod_grid, prod_slice),3);
+        end
     end
     
 end
 
 % convert molecules to moles
 total_prod = total_prod / 6.022e23;
+db.prod = db.prod / 6.022e23;
+db.prod_grid = db.prod_grid / 6.022e23;
 
 end
 
