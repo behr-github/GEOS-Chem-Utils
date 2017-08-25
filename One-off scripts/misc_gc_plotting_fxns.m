@@ -51,10 +51,14 @@ switch plttype
         [varargout{1}, varargout{2}, varargout{3}, varargout{4}] = check_ak_vcd_domino_weights();
     case 'comp2sat'
         [varargout{1}, varargout{2}, varargout{3}, varargout{4}, varargout{5}, varargout{6}, varargout{7}, varargout{8}] = compare_regions_to_sat(varargin{:});
+    case 'plotprofs'
+        plot_avg_gc_profs();
     case 'strat_no2'
         domino_sp_scatter();
     case 'compare-aks'
         compare_ak_vec();
+    case 'compare-raw-aks'
+        compare_raw_aks()
     otherwise
         fprintf('Did not recognize plot type\n');
         return
@@ -1161,6 +1165,10 @@ end
         % points, four per panel.
         
         plot_ratio_bool = strcmpi(ask_multichoice('Plot as ratios of model to satellite?',{'y','n'}),'y');
+        plot_maps = ask_yn('Plot maps too?');
+        if plot_maps
+            map_product = ask_multichoice('Which product for the maps?', {'sp', 'domino'}, 'list', true);
+        end
         
         if ismember('sdom',varargin)
             sdom = true;
@@ -1221,9 +1229,9 @@ end
         fprintf('Done.\n');
         
         fprintf('Dividing sat data into regions...   ');
-        %regions = {'sa','saf','naf','seas'};
-        regions = {'sa','saf','naf','seas','natl','spac'};
-        %regions = {'na','sa','saf','naf','neur','seas'};
+        %regions = {'sa','saf','naf','seas'}; region_xlabels = {'S. Am.','S. Af.','N. Af.', 'SE Asia'};
+        %regions = {'sa','saf','naf','seas','natl','spac'}; region_xlabels = {'S. Am.','S. Af.','N. Af.', 'SE Asia', 'N. Atl.', 'S. Pac.'};
+        regions = {'na','sa','saf','naf','neur','seas'}; region_xlabels = {'N. Am.','S. Am.','S. Af.','N. Af.', 'N. Eur.', 'SE Asia'};
         omno2_no2 = make_empty_struct_from_cell(regions);
         omno2_std = make_empty_struct_from_cell(regions);
         domino_no2 = make_empty_struct_from_cell(regions);
@@ -1244,6 +1252,7 @@ end
             
             omno2_db.(regions{r}).columns = omno2_data(xx,yy,timeind);
             omno2_db.(regions{r}).weight = omno2_weight(xx,yy,timeind);
+            omno2_db.(regions{r}).avg_vcd = nansum2(omno2_data(xx,yy,timeind) .* omno2_weight(xx,yy,timeind),3) ./ nansum2(omno2_weight(xx,yy,timeind),3);
             omno2_db.(regions{r}).lon = omno2_lon(xx,yy);
             omno2_db.(regions{r}).lat = omno2_lat(xx,yy);
             
@@ -1257,6 +1266,7 @@ end
             
             domino_db.(regions{r}).columns = domino_data(xx,yy,timeind);
             domino_db.(regions{r}).weight = domino_weight(xx,yy,timeind);
+            domino_db.(regions{r}).avg_vcd = nansum2(domino_data(xx,yy,timeind) .* domino_weight(xx,yy,timeind),3) ./ nansum2(domino_weight(xx,yy,timeind),3);
             domino_db.(regions{r}).lon = domino_lon(xx,yy);
             domino_db.(regions{r}).lat = domino_lat(xx,yy);
             
@@ -1268,7 +1278,7 @@ end
         gc_path = '/Users/Josh/Documents/MATLAB/MPN Project/Workspaces/Pickering Parameterization/DailyOMI/AllAKsDaily-newweight-allvcd';
         chems = {'JPLnoMPN','HendwMPN-PNA-N2O5','HendwMPN-PNA-N2O5'};
         omno2_ak_files = {'JPLnoMPN-Pickp0-OMI_NO2_OMNO2_aks_newweight_allvcd.mat','HendwMPN-PNA-N2O5-Pickp0-OMI_NO2_OMNO2_aks_newweight_allvcd.mat','HendwMPN-PNA-N2O5-Pickp33-OMI_NO2_OMNO2_aks_newweight_allvcd.mat'};
-        dom_ak_files = {'JPLnoMPN-Pickp0-OMI_NO2_DOMINO_aks_newweight_allvcd.mat','HendwMPN-PNA-N2O5-Pickp0-OMI_NO2_DOMINO_aks_newweight_allvcd.mat','HendwMPN-PNA-N2O5-Pickp33-OMI_NO2_DOMINO_aks_newweight_allvcd.mat'};
+        dom_ak_files = {'JPLnoMPN-Pickp0-OMI_NO2_DOMINO_aks_newweight_allvcd_domtrop.mat','HendwMPN-PNA-N2O5-Pickp0-OMI_NO2_DOMINO_aks_newweight_allvcd_domtrop.mat','HendwMPN-PNA-N2O5-Pickp33-OMI_NO2_DOMINO_aks_newweight_allvcd_domtrop.mat'};
         fields = {'Base','Final','Final33'};
         gc_data = make_empty_struct_from_cell(fields);
         omno2_gc = make_empty_struct_from_cell(regions,gc_data);
@@ -1288,6 +1298,7 @@ end
                 omno2_gc.(regions{r}).(fields{a}).mean = nansum2(gc_reg .* gc_wt)./nansum2(gc_wt);
                 notnans = ~isnan(gc_reg) & ~isnan(gc_wt);
                 omno2_gc.(regions{r}).(fields{a}).std = sqrt(var(gc_reg(notnans), gc_wt(notnans)));
+                omno2_gc.(regions{r}).(fields{a}).vcds = nansum2(gc(xx,yy,timeind) .* omno2_weight(xx,yy,timeind),3) ./ nansum2(omno2_weight(xx,yy,timeind),3);
                 %omno2_gc.(regions{r}).(fields{a}).mean = nanmean(reshape(gc(xx,yy,timeind),1,[]));
                 %omno2_gc.(regions{r}).(fields{a}).std = nanstd(reshape(gc(xx,yy,timeind),1,[]));
                 
@@ -1310,6 +1321,7 @@ end
                 domino_gc.(regions{r}).(fields{a}).mean = nansum2(gc_reg .* gc_wt)./nansum2(gc_wt);
                 notnans = ~isnan(gc_reg) & ~isnan(gc_wt);
                 domino_gc.(regions{r}).(fields{a}).std = sqrt(var(gc_reg(notnans), gc_wt(notnans)));
+                domino_gc.(regions{r}).(fields{a}).vcds = nansum2(gc(xx,yy,timeind) .* domino_weight(xx,yy,timeind),3) ./ nansum2(domino_weight(xx,yy,timeind),3);
                 %domino_gc.(regions{r}).(fields{a}).mean = nanmean(reshape(gc(xx,yy,timeind),1,[]));
                 %domino_gc.(regions{r}).(fields{a}).std = nanstd(reshape(gc(xx,yy,timeind),1,[]));
                 
@@ -1325,6 +1337,32 @@ end
         else
             sqrtn_o = 1;
             sqrtn_d = 1;
+        end
+
+
+        % Maps plotting to actually look at the columns
+        if plot_maps
+            if strcmpi(map_product,'sp')
+                S_sat = omno2_db;
+                S_gc = omno2_gc;
+            else
+                S_sat = domino_db;
+                S_gc = domino_gc;
+            end
+    
+            for r=1:numel(regions)
+                lon = S_sat.(regions{r}).lon;
+                lat = S_sat.(regions{r}).lat;
+                figure; 
+                subplot(3,3,2);
+                pcolor(lon, lat, S_sat.(regions{r}).avg_vcd); colorbar; title('Sat columns');
+                for f=1:3
+                    subplot(3,3,3+f);
+                    pcolor(lon, lat, S_gc.(regions{r}).(fields{f}).vcds); colorbar; title(sprintf('%s columns', fields{f}));
+                    subplot(3,3,6+f);
+                    pcolor(lon, lat, S_gc.(regions{r}).(fields{f}).vcds - S_sat.(regions{r}).avg_vcd); colorbar; title(sprintf('%s - sat', fields{f}));
+                end
+            end
         end
 
         % Finally make the figures. Two panels: OMNO2 on top, DOMINO on
@@ -1358,15 +1396,17 @@ end
                     mod_sat_ratio = omno2_gc.(regions{r}).(fields{a}).mean / omno2_no2.(regions{r});
                     l(a) = line(x+dx, mod_sat_ratio, 'color',cols{a},'marker',marks{1}, 'linestyle','none', 'linewidth', 2,'markersize',16);
                     
-                    % Uncertainty propagation for f = x/y => 
+                    % Uncertainty propagation for f = m/y => 
                     % s_f^2 = s_m^2/y^2 + s_y^2 * m^2/y^4. Here m is the
                     % model values and y the satellite values.
                     m = omno2_gc.(regions{r}).(fields{a}).mean;
                     s_m = omno2_gc.(regions{r}).(fields{a}).std / sqrtn_o;
                     y = omno2_no2.(regions{r});
                     s_y = omno2_std.(regions{r}) / sqrtn_o;
-                    s_f = (s_m.^2)/(y.^2) + (m.^2)./(y.^4).*s_y;
-                    %scatter_errorbars(x+dx, mod_sat_ratio, s_f, 'color', cols{a}, 'linewidth', 2);
+                    s_f = sqrt((s_m.^2)/(y.^2) + (m.^2)./(y.^4).*s_y.^2);
+                    
+                    %s_f = (y + s_m)./y; % Ben's simple way (ignores uncertainty in the satellite)
+                    scatter_errorbars(x+dx, mod_sat_ratio, s_f, 'color', cols{a}, 'linewidth', 2);
                     
                     mod_sat_ratio = domino_gc.(regions{r}).(fields{a}).mean / domino_no2.(regions{r});
                     l(a+numel(fields)) = line(x+dx, mod_sat_ratio, 'color',cols{a},'marker',marks{2}, 'linestyle','none', 'linewidth', 2,'markersize',16);
@@ -1378,16 +1418,16 @@ end
                     s_m = domino_gc.(regions{r}).(fields{a}).std / sqrtn_d;
                     y = domino_no2.(regions{r});
                     s_y = domino_std.(regions{r}) / sqrtn_d;
-                    s_f = (s_m.^2)/(y.^2) + (m.^2)./(y.^4).*s_y;
-                    %scatter_errorbars(x+dx+0.25, mod_sat_ratio, s_f, 'color', cols{a}, 'linewidth', 2);
+                    s_f = sqrt((s_m.^2)/(y.^2) + (m.^2)./(y.^4).*s_y.^2);
+                    
+                    %s_f = (y + s_m)./y; % Ben's simple way (ignores uncertainty in the satellite)
+                    scatter_errorbars(x+dx+0.25, mod_sat_ratio, s_f, 'color', cols{a}, 'linewidth', 2);
                 end
             end
         end
         %set(gca,'xtick',[1 3 5 7]);
         set(gca,'xtick',[1 3 5 7 9 11]);
-        %set(gca,'xticklabels',{'S. Am.','S. Af.','N. Af.', 'SE Asia'});
-        set(gca,'xticklabels',{'S. Am.','S. Af.','N. Af.', 'SE Asia', 'N. Atl.', 'S. Pac.'});
-        %set(gca,'xticklabels',{'N. Am.','S. Am.','S. Af.','N. Af.', 'N. Eur.', 'SE Asia'});
+        set(gca,'xticklabels',region_xlabels);
         set(gca,'fontsize',16,'ygrid','on');
         if ~plot_ratio_bool
             legend(l',{'OMNO2','Base case','Final case','Final case +33%'});
@@ -1441,6 +1481,49 @@ end
             legend(l',{'DOMINO','Base case','Final case','Final case +33%'});
         else
             legend(l',{'Base case','Final case','Final case +33%'});
+        end
+    end
+
+    function plot_avg_gc_profs()
+        regions = ask_multiselect('Which regions to plot?', {'na','sa','naf','saf','neur','seas','natl','spac'},'all',true);
+        cases = ask_multiselect('Which cases to plot?', {'base','update','update_p33'}, 'all', true);
+        filter_emissions = ask_yn('Filter for lightning >0.6?');
+
+        prof_dir = '/Users/Josh/Documents/MATLAB/MPN Project/Workspaces/Pickering Parameterization/DailyOMI/All2012Daily';
+        prof_files = struct('base', fullfile(prof_dir, 'JPLnoMPN-Pickp0-OMI_NO2.mat'),...
+                            'update', fullfile(prof_dir, 'HendwMPN-PNA-N2O5-Pickp0-OMI-TIME-SER_NO2.mat'),...
+                            'update_p33', fullfile(prof_dir, 'HendwMPN-PNA-N2O5-Pickp33-OMI-TIME-SER_NO2.mat'));
+
+        emis_dir = '/Users/Josh/Documents/MATLAB/MPN Project/Workspaces/Pickering Parameterization/Daily24hrs/All2012Daily';
+        emis_files = struct('base', fullfile(emis_dir, 'JPLnoMPN-Pickp0-ProdFrac.mat'),...
+                            'update', fullfile(emis_dir, 'HendwMPN_PNA_N2O5-Pickp0-ProdFrac.mat'),...
+                            'update_p33', fullfile(emis_dir, 'HendwMPN_PNA_N2O5-Pickp33-ProdFrac.mat'));
+        emis_vars = struct('base', 'jplnompn_pickp0_lnoxgt60',...
+                           'update', 'hendwmpn_pna_n2o5_pickp0_lnoxgt60',...
+                           'update_p33', 'hendwmpn_pna_n2o5_pickp33_lnoxgt60');
+
+        % Load the pressure for vertical coordinate
+        load(fullfile(prof_dir, 'JPLnoMPN-Pickp0-OMI_aux.mat'));
+        JPLnoMPN_Pickp0_OMI_aux(2:end) = [];
+        pres = JPLnoMPN_Pickp0_OMI_aux.dataBlock;
+
+        for c=1:numel(cases)
+            P = load(prof_files.(cases{c}));
+            fn = fieldnames(P);
+            no2 = P.(fn{1}).dataBlock;
+            E = load(emis_files.(cases{c}));
+            lnox_mask = repmat(E.(emis_vars.(cases{c})), 1, 1, size(no2,3));
+            if filter_emissions
+                no2(~lnox_mask) = nan;
+            end
+
+            for r=1:numel(regions)
+                [xx,yy,tt] = misc_gc_plotting_fxns('region_xxyy', regions{r});
+                no2slice = permute(no2(xx,yy,:,tt), [3 1 2 4]);
+                presslice = permute(pres(xx,yy,:,tt), [3 1 2 4]);
+                figure; plot(nanmean(no2slice(:,:),2), nanmean(presslice(:,:),2));
+                title(sprintf('%s - %s', cases{c}, regions{r}));
+            end
         end
     end
 
@@ -1657,6 +1740,87 @@ end
         
     end
 
+    function compare_raw_aks()
+        region = ask_multichoice('Which region to look at?', {'sa','saf','naf','seas'}, 'list', true);
+        ak_or_sw = ask_multichoice('Plot as scattering weights or AKs?', {'Scattering Weight', 'AKs'}, 'list', true);
+        ak_bool = strcmpi(ak_or_sw, 'AKs');
+        
+        dvec = datenum('2012-01-01'):datenum('2012-12-31');
+        [lonlim,latlim,tt] = define_regions(region);
+        dvec = dvec(tt);
+        
+        figure; 
+        title(sprintf('DOMINO ensemble - %s', upper(region)));
+        
+        day_incr = 15;
+        for a=1:day_incr:numel(dvec)
+            fprintf('Now on day %d of %d\n', a, floor(numel(dvec)/day_incr));
+            [dpath, dfiles] = domino_files(dvec(a));
+            [dom_aks, dom_plevs, dom_lon, dom_lat] = load_domino_aks(dpath, dfiles, lonlim, latlim, ak_bool);
+            [spath, sfiles] = sp_files(dvec(a));
+            [sp_aks, sp_plevs, sp_lon, sp_lat] = load_sp_aks(spath, sfiles, lonlim, latlim, ak_bool);
+            dom_nans = squeeze(all(isnan(dom_aks),1));
+            sp_nans = squeeze(all(isnan(sp_aks),1));
+            if all(dom_nans(:)) || all(sp_nans(:)) || numel(sp_lon) ~= numel(dom_lon)
+                continue
+            end
+            dom_notin = dom_lon < lonlim(1) | dom_lon > lonlim(2) | dom_lat < latlim(1) | dom_lat > latlim(2);
+            sp_notin = sp_lon < lonlim(1) | sp_lon > lonlim(2) | sp_lat < latlim(1) | sp_lat > latlim(2);
+            
+            % We only want to look at pixels that are valid in both
+            % products
+            dom_aks(:, dom_nans | sp_nans | dom_notin | sp_notin) = [];
+            dom_plevs(:,dom_nans | sp_nans | dom_notin | sp_notin) = [];
+            dom_lon(dom_nans | sp_nans | dom_notin | sp_notin) = [];
+            dom_lat(dom_nans | sp_nans | dom_notin | sp_notin) = [];
+            sp_aks(:, dom_nans | sp_nans | dom_notin | sp_notin) = [];
+            sp_lon(dom_nans | sp_nans | dom_notin | sp_notin) = [];
+            sp_lat(dom_nans | sp_nans | dom_notin | sp_notin) = [];
+            
+            % For both, we'll average them over time, but for DOMINO we
+            % also want to plot the ensemble to prove that the
+            % interpolation is behaving correctly (and hope that this
+            % doesn't crash matlab b/c of too many lines)
+            if a == 1
+                sp_mean = nan(numel(sp_plevs),1);
+                sp_count = 0;
+                dom_mean = nan(numel(sp_plevs),1);
+                dom_count = 0;
+            end
+            
+            for b=1:size(dom_aks,2)
+                line(dom_aks(:,b), dom_plevs(:,b), 'color', [0.5 0.5 0.5]);
+                % We'll use the SP pressure levels to interpolate to b/c
+                % they are nice and consistent
+                interp_dom = interp1(dom_plevs(:,b), dom_aks(:,b), sp_plevs(:));
+                dom_mean = nansum2(cat(2, dom_mean, interp_dom),2);
+                dom_count = dom_count + 1;
+            end
+            
+            for b=1:size(sp_aks,2)
+                sp_mean = nansum2(cat(2, sp_mean, sp_aks(:,b)),2);
+                sp_count = sp_count + 1;
+            end
+            
+        end
+        
+        dom_mean = dom_mean / dom_count;
+        sp_mean = sp_mean / sp_count;
+        line(dom_mean, sp_plevs, 'color', 'b', 'linewidth', 2);
+        set(gca,'fontsize',16,'ydir','reverse')
+        xlabel(ak_or_sw); ylabel('Pressure (hPa)');
+        
+        figure;
+        l = gobjects(2,1);
+        l(1) = line(sp_mean, sp_plevs, 'color', 'r', 'linewidth', 2);
+        l(2) = line(dom_mean, sp_plevs, 'color', 'b', 'linewidth', 2);
+        legend(l, {sprintf('NASA SP (%d pixels)', sp_count), sprintf('DOMINO (%d pixels)', dom_count)}, 'location', 'NorthWest');
+        xlabel(ak_or_sw); ylabel('Pressure (hPa)');
+        set(gca,'fontsize',16,'ydir','reverse');
+        ylim([0 1013]);
+        title(sprintf('Avg. %s: %s', ak_or_sw, upper(region)));
+    end
+
     function [aks, plevs, lon, lat] = load_sp_aks(filepath, files, lonlim, latlim, ak_bool)
         aks = [];
         lon = [];
@@ -1743,8 +1907,10 @@ end
             
             omi.aks = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,1,'AveragingKernel')))*0.001;
             omi.aks(omi.aks<-30) = nan;
-            omi.amf = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,1,'AirMassFactorTropospheric')));
+            omi.amf = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,1,'AirMassFactor')));
             omi.amf(omi.amf<-1e29) = nan;
+            omi.amftrop = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,1,'AirMassFactorTropospheric')));
+            omi.amftrop(omi.amftrop<-1e29) = nan;
             omi.TM4PresA = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,1,'TM4PressurelevelA')))*0.01; % in Pa, want hPa.
             omi.TM4PresA(omi.TM4PresA<-1e30) = nan;
             omi.TM4PresB = double(h5read(hi.Filename, h5dsetname(hi,1,2,1,1,'TM4PressurelevelB')));
@@ -1777,6 +1943,9 @@ end
             omi.PresLevs(:,bad_vals) = nan;
             omi.amf(bad_vals) = nan;
             if ak_bool
+                for b=1:numel(omi.amf)
+                    omi.aks(:,b) = omi.aks(:,b) * omi.amf(b) / omi.amftrop(b);
+                end
                 aks = cat(2, aks, omi.aks(:,xx));
             else
                 omi.aks(:,~xx) = [];
@@ -1803,7 +1972,7 @@ end
     end
 
     function [filepath, files] = sp_files(date_in)
-        sp_dir = '/Volumes/share-sat/SAT/OMI/OMNO2/2012';
+        sp_dir = '/Volumes/share-sat/SAT/OMI/OMNO2/version_3_2_1/2012';
         sp_pattern = 'OMI-Aura_L2-OMNO2_%04dm%02d%02d*';
         filepath = fullfile(sp_dir, sprintf('%02d', month(date_in)));
         filename = fullfile(filepath, sprintf(sp_pattern, year(date_in), month(date_in), day(date_in)));

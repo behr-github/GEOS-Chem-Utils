@@ -63,11 +63,11 @@ try
                     DimIDs.time_edge = netcdf.defDim(ncid, 'time_edge', numel(GC.tEdge));
                 end
                 
-                write_var_with_atts(ncid,'lon',glon,make_dims(glon), 'degrees', 'Longitude of GEOS-Chem grid cell center (west is negative)');
-                write_var_with_atts(ncid,'lat',glat,make_dims(glat), 'degrees', 'Latitude of GEOS-Chem grid cell center (south is negative)');
-                write_var_with_atts(ncid,'time',GC.tVec - datenum('1985-01-01'),make_dims(GC.tVec), 'days since midnight 1 Jan 1985', 'Model date as a number of days since midnight 1 Jan 1985');
+                write_var_with_atts(ncid,'lon',glon,make_dims(glon), 'degrees', 'Longitude of GEOS-Chem grid cell center (west is negative)','','');
+                write_var_with_atts(ncid,'lat',glat,make_dims(glat), 'degrees', 'Latitude of GEOS-Chem grid cell center (south is negative)','','');
+                write_var_with_atts(ncid,'time',GC.tVec - datenum('1985-01-01'),make_dims(GC.tVec), 'days since midnight 1 Jan 1985', 'Model date as a number of days since midnight 1 Jan 1985','','');
                 if do_tedge
-                    write_var_with_atts(ncid,'time_edge',GC.tEdge - datenum('1985-01-01'),make_dims(GC.tEdge),'days since midnight 1 Jan 1985','Edges of model averaging periods (assumes adjacent periods)');
+                    write_var_with_atts(ncid,'time_edge',GC.tEdge - datenum('1985-01-01'),make_dims(GC.tEdge),'days since midnight 1 Jan 1985','Edges of model averaging periods (assumes adjacent periods)','','');
                 end
                 netcdf.putAtt(ncid,netcdf.getConstant('GLOBAL'),'modelName',GC.modelName);
                 netcdf.putAtt(ncid,netcdf.getConstant('GLOBAL'),'modelRes',GC.modelRes);
@@ -86,7 +86,7 @@ try
                 gcvar = [gccat,'-',gcvar]; % and if a category is given, prepend it to the variable name (this deals with the production variables all being called "NO tracer")
             end
             dims_cell = make_dims(GC.dataBlock);
-            write_var_with_atts(ncid, gcvar, GC.dataBlock, dims_cell, GC.dataUnit, GC.description);
+            write_var_with_atts(ncid, gcvar, GC.dataBlock, dims_cell, GC.dataUnit, GC.description, GC.fullCat, GC.fullName);
         end
     end
 catch err
@@ -139,7 +139,7 @@ netcdf.close(ncid);
 
 end
 
-function write_var_with_atts(ncid, gcvar, val, dims, units, description)
+function write_var_with_atts(ncid, gcvar, val, dims, units, description, gc_cat, gc_name)
 if ~isnumeric(val)
     error('ncval:not_numeric', 'VAL must be a numeric type');
 end
@@ -150,16 +150,7 @@ netcdf.defVarDeflate(ncid, varid, true, true, 1);
 netcdf.putVar(ncid, varid, val);
 netcdf.putAtt(ncid, varid, 'Units', units);
 netcdf.putAtt(ncid, varid, 'Description', description);
+netcdf.putAtt(ncid, varid, 'Diagnostic_Category', gc_cat);
+netcdf.putAtt(ncid, varid, 'Tracer_Name', gc_name);
 
-end
-
-function write_var_with_atts_old(ncfile, gcvar, val, dims, units, description)
-if ~isnumeric(val)
-    error('ncval:not_numeric', 'VAL must be a numeric type');
-end
-val = single(val);
-nccreate(ncfile, gcvar, 'Dimensions', dims, 'Datatype', 'single');
-ncwrite(ncfile, gcvar, val);
-ncwriteatt(ncfile, gcvar, 'Units', units);
-ncwriteatt(ncfile, gcvar, 'Description', description);
 end
