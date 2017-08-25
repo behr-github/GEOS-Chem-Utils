@@ -174,8 +174,8 @@ end
 
 sz_wt = size(total_weights);
 
-%parfor d=1:numel(tVec)
-for d=1:numel(tVec)
+parfor d=1:numel(tVec)
+%for d=1:numel(tVec)
     fprintf('Loading OMI files for %s\n',datestr(tVec(d)));
     earth_ellip = referenceEllipsoid('wgs84','kilometer');
     if strcmpi(retrieval,'omno2')
@@ -857,7 +857,7 @@ for a=1:sz(1)
                 omi_no2_columns(p) = nansum2((omi_no2_p * 1e-9) .* (omi_ndens_air_p * 1e-6) .* (omi_bxhght_p * 100) .* omi_aks(:,p));
 
                 if xor(all(isnan(omi_aks(:,p))), omi_weights(p) == 0 || isnan(omi_weights(p)))
-                    warning('For a = %d, b = %d, t = %d, p = %d, the AK is all NaNs (bool=%d) but the weight is positive (isnan=%d, ==0=%d) or vice versa',a,b,t,p, all(isnan(omi_aks(:,p))), isnan(omi_weights(p)), omi_weights(p)==0)
+                    %warning('For a = %d, b = %d, t = %d, p = %d, the AK is all NaNs (bool=%d) but the weight is positive (isnan=%d, ==0=%d) or vice versa',a,b,t,p, all(isnan(omi_aks(:,p))), isnan(omi_weights(p)), omi_weights(p)==0)
                 end
             end
             %fprintf('W%d: (%d,%d): Size omi_no2_columns = %s, Size omi_weights = %s, size omi_aks = %s\n',tstr.ID,a,b,mat2str(size(omi_no2_columns)),mat2str(size(omi_weights)), mat2str(size(omi_aks)));
@@ -873,7 +873,43 @@ function gc_prof = scale_gc_prof(gc_prof, prof_pres, no2nox_ratios)
 % log-log space again. Values outside the ratios' pressure range are set to
 % 0, so that when exponentiated, they become 1, i.e. don't scale the
 % profile where we don't have the data to do so.
-dc3_ratio = exp(interp1(log(no2nox_ratios.dc3_pres), log(no2nox_ratios.dc3_ratio), log(prof_pres), 'linear', 0));
-gc_ratio = exp(interp1(log(no2nox_ratios.gc_pres), log(no2nox_ratios.gc_ratio), log(prof_pres), 'linear', 0));
+E = JLLErrors;
+dc3_ratio = exp(interp1(log(no2nox_ratios.dc3_pres), log(no2nox_ratios.dc3_ratio), log(prof_pres), 'linear', nan));
+gc_ratio = exp(interp1(log(no2nox_ratios.gc_pres), log(no2nox_ratios.gc_ratio), log(prof_pres), 'linear', nan));
+% We can't have constant extrapolation with linear interpolation, so
+% instead we do this manually. However, for levels where both the
+% observations and model are not available, set to 1.
+dc3_nans = isnan(dc3_ratio);
+dc3_v1 = find(~dc3_nans,1,'first');
+dc3_vlast = find(~dc3_nans,1,'last');
+gc_nans = isnan(gc_ratio);
+gc_v1 = find(~gc_nans,1,'first');
+gc_vlast = find(~gc_nans,1,'last');
+for a=1:numel(dc3_nans)
+    if dc3_nans(a) && gc_nans(a)
+        dc3_ratio(a) = 1;
+        gc_ratio(a) = 1;
+    else
+        if dc3_nans(a) && ~gc_nans(a)
+            if a <= dc3_v1
+                dc3_ratio(a) = dc3_ratio(dc3_v1);
+            elseif a >= dc3_vlast
+                dc3_ratio(a) = dc3_ratio(dc3_vlast);
+            else
+                E.notimplemented('NaN in dc3_ratio between the first and last non-NaN values')
+            end
+        elseif gc_nans(a) && ~dc3_nans(a)
+            if a <= gc_v1
+                gc_ratio(a) = gc_ratio(gc_v1);
+            elseif a >= gc_vlast
+                gc_ratio(a) = gc_ratio(gc_vlast);
+            else
+                E.notimplemented('NaN in gc_ratio between the first and last non-NaN values')
+            end
+        else
+            % nothing to do if neither is a NaN
+        end
+    end
+end
 gc_prof = gc_prof .* dc3_ratio ./ gc_ratio;
 end
